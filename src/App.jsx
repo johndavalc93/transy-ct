@@ -1,88 +1,56 @@
-import React, { useState, useEffect } from 'react';
-import { supabase } from './supabaseClient';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  MapPin, Navigation, Car, Shield, DollarSign, Clock,
-  CheckCircle, XCircle, User, Phone, Star, Sliders,
-  RefreshCw, Radio, ChevronRight, Sparkles
+  MapPin, Navigation, Car, Shield, Clock, DollarSign, CheckCircle2,
+  User, Phone, Star, Menu, X, ChevronRight, AlertCircle, RefreshCw,
+  Compass, ExternalLink, Search
 } from 'lucide-react';
+import { supabase } from './supabaseClient';
+import L from 'leaflet';
+import 'leaflet/dist/leaflet.css';
 
-const DESTINATIONS = [
-  { id: 'hvn', name: 'Tweed New Haven Airport (HVN)', miles: 6.5, baseTime: '14 min' },
-  { id: 'union', name: 'New Haven Union Station', miles: 4.8, baseTime: '11 min' },
-  { id: 'bdl', name: 'Bradley International Airport (BDL)', miles: 48.0, baseTime: '52 min' },
-  { id: 'stamford', name: 'Stamford Transportation Center', miles: 42.5, baseTime: '48 min' },
-  { id: 'jfk', name: 'JFK International Airport (NY)', miles: 86.0, baseTime: '1 hr 45 min' },
-];
+// Corregir iconos por defecto de Leaflet en Vite
+delete L.Icon.Default.prototype._getIconUrl;
+L.Icon.Default.mergeOptions({
+  iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+});
 
-const PICKUPS = [
-  'Hamden Center (Whitney Ave)',
-  'Yale University / Downtown New Haven',
-  'Milford Plaza / Post Rd',
-  'Meriden Transit Center',
-];
-
-const TIERS = [
-  { id: 'X', name: 'Transy X', desc: 'Económico • 4 pasajeros', ratePerMile: 2.1, baseFare: 5.0, eta: '3 min' },
-  { id: 'XL', name: 'Transy XL', desc: 'SUV / Grupos • 6 pasajeros', ratePerMile: 2.9, baseFare: 8.5, eta: '5 min' },
-  { id: 'VIP', name: 'Transy VIP', desc: 'Ejecutivo • Aeropuertos', ratePerMile: 3.8, baseFare: 14.0, eta: '6 min' },
+const SERVICE_TIERS = [
+  { id: 'TRANSY X', name: 'TRANSY X', desc: 'Económico • 4 pasajeros', base: 4.5, perMile: 1.65, perMin: 0.25, eta: '3 min' },
+  { id: 'TRANSY XL', name: 'TRANSY XL', desc: 'SUV / Grupos • 6 pasajeros', base: 7.5, perMile: 2.35, perMin: 0.35, eta: '5 min' },
+  { id: 'TRANSY VIP', name: 'TRANSY VIP', desc: 'Ejecutivo / Aeropuertos', base: 14.0, perMile: 3.1, perMin: 0.45, eta: '8 min' }
 ];
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState('rider'); // 'rider' | 'driver' | 'admin'
-  const [brandName, setBrandName] = useState('TRANSY');
+  const [role, setRole] = useState('passenger'); // passenger | driver | admin
   const [rides, setRides] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [dbError, setDbError] = useState(null);
+  const [loading, setLoading] = useState(false);
 
-  // Estado Cliente
-  const [pickup, setPickup] = useState(PICKUPS[0]);
-  const [destination, setDestination] = useState(DESTINATIONS[0]);
-  const [selectedTier, setSelectedTier] = useState('X');
-  const [promoApplied, setPromoApplied] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
+  // Estado de ubicaciones y mapa
+  const [pickupText, setPickupText] = useState('Hamden Center, Hamden, CT');
+  const [dropoffText, setDropoffText] = useState('Tweed New Haven Airport (HVN), New Haven, CT');
+  const [pickupCoords, setPickupCoords] = useState({ lat: 41.3839, lng: -72.9026 });
+  const [dropoffCoords, setDropoffCoords] = useState({ lat: 41.2638, lng: -72.8868 });
 
-  // Estado Conductor
-  const [driverOnline, setDriverOnline] = useState(true);
+  const [pickupSuggestions, setPickupSuggestions] = useState([]);
+  const [dropoffSuggestions, setDropoffSuggestions] = useState([]);
+  const [routeStats, setRouteStats] = useState({ miles: 9.8, minutes: 18 });
+  const [selectedTier, setSelectedTier] = useState('TRANSY X');
+  const [passengerName, setPassengerName] = useState('Cliente Transy');
+  const [gpsLoading, setGpsLoading] = useState(false);
 
-  // Estado Admin
-  const [commissionRate, setCommissionRate] = useState(0.15); // 15% plataforma
-  const [surgeMultiplier, setSurgeMultiplier] = useState(1.0);
+  const mapRef = useRef(null);
+  const mapInstance = useRef(null);
+  const layerGroup = useRef(null);
 
-  // Cargar viajes iniciales y suscribirse a cambios en tiempo real
-  useEffect(() => {
-    fetchRides();
-
-    const channel = supabase
-      .channel('realtime-rides')
-      .on(
-        'postgres_changes',
-        { event: '*', schema: 'public', table: 'rides' },
-        (payload) => {
-          if (payload.eventType === 'INSERT') {
-            setRides((prev) => [payload.new, ...prev]);
-          } else if (payload.eventType === 'UPDATE') {
-            setRides((prev) =>
-              prev.map((r) => (r.id === payload.new.id ? payload.new : r))
-            );
-          } else if (payload.eventType === 'DELETE') {
-            setRides((prev) => prev.filter((r) => r.id !== payload.old.id));
-          }
-        }
-      )
-      .subscribe();
-
-    return () => {
-      supabase.removeChannel(channel);
-    };
-  }, []);
-
-  async function fetchRides() {
-    setLoading(true);
+  // Cargar viajes desde Supabase
+  const fetchRides = async () => {
     const { data, error } = await supabase
       .from('rides')
       .select('*')
-      .order('created_at', { ascending: false })
-      .limit(25);
+      .order('created_at', { ascending: false });
 
     if (error) {
       setDbError(error.message);
@@ -90,560 +58,485 @@ export default function App() {
       setDbError(null);
       setRides(data || []);
     }
-    setLoading(false);
-  }
-
-  const calculateFare = (tierObj) => {
-    const raw = (tierObj.baseFare + destination.miles * tierObj.ratePerMile) * surgeMultiplier;
-    const discounted = promoApplied ? raw * 0.85 : raw;
-    return Number(discounted.toFixed(2));
   };
 
-  // Crear solicitud de viaje en Supabase
-  async function handleRequestRide() {
-    setSubmitting(true);
-    const tierObj = TIERS.find((t) => t.id === selectedTier);
-    const fare = calculateFare(tierObj);
-    const driverEarnings = Number((fare * (1 - commissionRate)).toFixed(2));
+  useEffect(() => {
+    fetchRides();
+    const channel = supabase
+      .channel('rides-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'rides' }, () => {
+        fetchRides();
+      })
+      .subscribe();
 
-    const { data, error } = await supabase
-      .from('rides')
-      .insert([
-        {
-          pickup_address: pickup,
-          dropoff_address: destination.name,
-          tier: selectedTier,
-          fare,
-          driver_earnings: driverEarnings,
-          status: 'requested',
-        },
-      ])
-      .select()
-      .single();
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
 
-    if (error) {
-      alert('Error al solicitar viaje: ' + error.message);
-    } else if (data) {
-      setRides((prev) => (prev.some((r) => r.id === data.id) ? prev : [data, ...prev]));
+  // Inicializar mapa Leaflet
+  useEffect(() => {
+    if (role !== 'passenger') return;
+    if (!mapRef.current || mapInstance.current) return;
+
+    const map = L.map(mapRef.current, { zoomControl: false }).setView([pickupCoords.lat, pickupCoords.lng], 12);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '&copy; OpenStreetMap &copy; CARTO'
+    }).addTo(map);
+
+    layerGroup.current = L.layerGroup().addTo(map);
+    mapInstance.current = map;
+
+    return () => {
+      map.remove();
+      mapInstance.current = null;
+    };
+  }, [role]);
+
+  // Calcular ruta real por carretera con OSRM y dibujar en el mapa
+  useEffect(() => {
+    const updateRoute = async () => {
+      try {
+        const url = `https://router.project-osrm.org/route/v1/driving/${pickupCoords.lng},${pickupCoords.lat};${dropoffCoords.lng},${dropoffCoords.lat}?overview=full&geometries=geojson`;
+        const res = await fetch(url);
+        const json = await res.json();
+
+        if (json.routes && json.routes.length > 0) {
+          const route = json.routes[0];
+          const miles = +(route.distance * 0.000621371).toFixed(1);
+          const minutes = Math.max(3, Math.round(route.duration / 60));
+          setRouteStats({ miles, minutes });
+
+          if (mapInstance.current && layerGroup.current) {
+            layerGroup.current.clearLayers();
+            const coords = route.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+            const polyline = L.polyline(coords, { color: '#10b981', weight: 5 }).addTo(layerGroup.current);
+
+            L.marker([pickupCoords.lat, pickupCoords.lng]).addTo(layerGroup.current).bindPopup('Origen');
+            L.marker([dropoffCoords.lat, dropoffCoords.lng]).addTo(layerGroup.current).bindPopup('Destino');
+
+            mapInstance.current.fitBounds(polyline.getBounds(), { padding: [35, 35] });
+          }
+        }
+      } catch (err) {
+        console.error('Error calculando ruta:', err);
+      }
+    };
+
+    updateRoute();
+  }, [pickupCoords, dropoffCoords, role]);
+
+  // Buscar direcciones reales con Photon (OpenStreetMap)
+  const searchAddress = async (query, type) => {
+    if (type === 'pickup') setPickupText(query);
+    else setDropoffText(query);
+
+    if (query.trim().length < 3) {
+      type === 'pickup' ? setPickupSuggestions([]) : setDropoffSuggestions([]);
+      return;
     }
-    setSubmitting(false);
-  }
 
-  // Actualizar estado del viaje en Supabase
-  async function updateRideStatus(rideId, newStatus) {
-    const { data, error } = await supabase
-      .from('rides')
-      .update({ status: newStatus })
-      .eq('id', rideId)
-      .select()
-      .single();
-
-    if (error) {
-      alert('Error actualizando estado: ' + error.message);
-    } else if (data) {
-      setRides((prev) => prev.map((r) => (r.id === data.id ? data : r)));
+    try {
+      // Sesgo geográfico hacia Connecticut / Tri-State
+      const res = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&lat=41.38&lon=-72.90&limit=5`);
+      const data = await res.json();
+      const formatted = (data.features || []).map((f) => {
+        const p = f.properties;
+        const label = [p.name, p.street, p.housenumber, p.city || p.town, p.state].filter(Boolean).join(', ');
+        return {
+          label: label || query,
+          lat: f.geometry.coordinates[1],
+          lng: f.geometry.coordinates[0]
+        };
+      });
+      if (type === 'pickup') setPickupSuggestions(formatted);
+      else setDropoffSuggestions(formatted);
+    } catch (e) {
+      console.error(e);
     }
-  }
+  };
 
-  const activeRiderRide = rides.find((r) =>
-    ['requested', 'accepted', 'arrived', 'in_progress'].includes(r.status)
-  );
-  const pendingRequests = rides.filter((r) => r.status === 'requested');
-  const activeDriverRide = rides.find((r) =>
-    ['accepted', 'arrived', 'in_progress'].includes(r.status)
-  );
+  // Obtener GPS real del dispositivo
+  const handleUseCurrentGPS = () => {
+    if (!navigator.geolocation) {
+      alert('Tu navegador no soporta GPS.');
+      return;
+    }
+    setGpsLoading(true);
+    navigator.geolocation.getCurrentPosition(
+      async (pos) => {
+        const lat = pos.coords.latitude;
+        const lng = pos.coords.longitude;
+        setPickupCoords({ lat, lng });
+        setPickupSuggestions([]);
+        try {
+          const res = await fetch(`https://photon.komoot.io/reverse?lon=${lng}&lat=${lat}`);
+          const data = await res.json();
+          const p = data.features?.[0]?.properties;
+          const label = p ? [p.name, p.street, p.city || p.town, p.state].filter(Boolean).join(', ') : `GPS (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+          setPickupText(label);
+        } catch {
+          setPickupText(`Mi ubicación GPS (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+        }
+        setGpsLoading(false);
+      },
+      () => {
+        alert('No se pudo obtener el GPS. Activa los permisos de ubicación en tu teléfono.');
+        setGpsLoading(false);
+      },
+      { enableHighAccuracy: true }
+    );
+  };
+
+  const calculatePrice = (tier) => {
+    const raw = tier.base + routeStats.miles * tier.perMile + routeStats.minutes * tier.perMin;
+    return raw.toFixed(2);
+  };
+
+  const handleRequestRide = async () => {
+    setLoading(true);
+    const tierObj = SERVICE_TIERS.find((t) => t.id === selectedTier) || SERVICE_TIERS[0];
+    const fare = parseFloat(calculatePrice(tierObj));
+
+    const { error } = await supabase.from('rides').insert([
+      {
+        passenger_name: passengerName || 'Cliente Transy',
+        pickup: pickupText,
+        dropoff: dropoffText,
+        pickup_lat: pickupCoords.lat,
+        pickup_lng: pickupCoords.lng,
+        dropoff_lat: dropoffCoords.lat,
+        dropoff_lng: dropoffCoords.lng,
+        distance_miles: routeStats.miles,
+        duration_min: routeStats.minutes,
+        service_type: tierObj.name,
+        fare,
+        status: 'pending'
+      }
+    ]);
+
+    setLoading(false);
+    if (error) {
+      setDbError(error.message);
+    } else {
+      fetchRides();
+      alert('¡Viaje solicitado! Cambia a Conductor para aceptarlo.');
+    }
+  };
+
+  const updateRideStatus = async (id, newStatus) => {
+    const { error } = await supabase.from('rides').update({ status: newStatus }).eq('id', id);
+    if (!error) fetchRides();
+  };
+
+  const activeRides = rides.filter((r) => r.status !== 'completed' && r.status !== 'cancelled');
   const completedRides = rides.filter((r) => r.status === 'completed');
-  const totalRevenue = completedRides.reduce((acc, r) => acc + Number(r.fare || 0), 0);
-  const totalDriverNet = completedRides.reduce((acc, r) => acc + Number(r.driver_earnings || 0), 0);
+  const totalRevenue = completedRides.reduce((sum, r) => sum + Number(r.fare || 0), 0);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans">
-      {/* Barra superior de navegación */}
+    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-12">
+      {/* Barra superior */}
       <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3">
         <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500 flex items-center justify-center text-slate-950 font-black text-lg">
-              {brandName.slice(0, 1)}
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500 flex items-center justify-center font-black text-slate-950 text-lg">
+              T
             </div>
-            <input
-              value={brandName}
-              onChange={(e) => setBrandName(e.target.value.toUpperCase())}
-              className="bg-transparent font-extrabold tracking-wider text-lg text-white focus:outline-none border-b border-transparent focus:border-emerald-500 w-32"
-              title="Haz clic para cambiar el nombre"
-            />
-            <span className="hidden sm:inline-flex items-center gap-1 text-xs bg-emerald-500/15 text-emerald-400 px-2.5 py-1 rounded-full border border-emerald-500/30">
-              <Radio className="w-3 h-3 animate-pulse" /> Supabase Live
-            </span>
+            <div>
+              <h1 className="font-bold tracking-wider text-base leading-none">TRANSY</h1>
+              <span className="text-[11px] text-emerald-400 font-medium">GPS & Supabase Live</span>
+            </div>
           </div>
 
-          <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700">
+          <nav className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs sm:text-sm">
             <button
-              onClick={() => setActiveTab('rider')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                activeTab === 'rider' ? 'bg-emerald-500 text-slate-950' : 'text-slate-300 hover:text-white'
-              }`}
+              onClick={() => setRole('passenger')}
+              className={`px-3 py-1.5 rounded-lg font-medium transition ${role === 'passenger' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
             >
-              App Cliente
+              Pasajero
             </button>
             <button
-              onClick={() => setActiveTab('driver')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition flex items-center gap-1.5 ${
-                activeTab === 'driver' ? 'bg-emerald-500 text-slate-950' : 'text-slate-300 hover:text-white'
-              }`}
+              onClick={() => setRole('driver')}
+              className={`px-3 py-1.5 rounded-lg font-medium transition ${role === 'driver' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
             >
-              App Conductor
-              {pendingRequests.length > 0 && (
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
-              )}
+              Conductor ({activeRides.length})
             </button>
             <button
-              onClick={() => setActiveTab('admin')}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition ${
-                activeTab === 'admin' ? 'bg-emerald-500 text-slate-950' : 'text-slate-300 hover:text-white'
-              }`}
+              onClick={() => setRole('admin')}
+              className={`px-3 py-1.5 rounded-lg font-medium transition ${role === 'admin' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
             >
               Admin
             </button>
-          </div>
+          </nav>
         </div>
       </header>
 
-      {/* Aviso de error de conexión o RLS si ocurre */}
       {dbError && (
-        <div className="max-w-3xl mx-auto mt-4 px-4">
-          <div className="bg-red-500/15 border border-red-500/40 text-red-200 p-4 rounded-2xl text-sm">
-            <p className="font-bold">Aviso de Base de Datos (Supabase):</p>
-            <p className="mt-1">{dbError}</p>
-            <p className="mt-2 text-xs text-red-300">
-              Verifica tu archivo .env y asegúrate de desactivar RLS temporalmente o crear políticas públicas en la tabla "rides".
-            </p>
+        <div className="max-w-xl mx-auto mt-4 px-4">
+          <div className="bg-red-950/80 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
+            <span>Error Supabase: {dbError}</span>
           </div>
         </div>
       )}
 
-      <main className="max-w-5xl mx-auto p-4 pb-16">
-        {/* ================= VISTA 1: APP CLIENTE ================= */}
-        {activeTab === 'rider' && (
-          <div className="max-w-md mx-auto bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl">
-            <div className="bg-gradient-to-br from-emerald-900/50 via-slate-900 to-slate-900 p-5 border-b border-slate-800">
-              <div className="flex justify-between items-center mb-4">
-                <span className="text-xs uppercase tracking-widest text-emerald-400 font-bold">
-                  Connecticut Express
-                </span>
-                <button
-                  onClick={fetchRides}
-                  className="p-1.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white"
-                  title="Sincronizar"
-                >
-                  <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                </button>
-              </div>
+      {/* VISTA PASAJERO */}
+      {role === 'passenger' && (
+        <main className="max-w-xl mx-auto px-4 pt-4 space-y-4">
+          {/* Mapa Interactivo */}
+          <div className="relative rounded-2xl overflow-hidden border border-slate-800 shadow-xl h-56 sm:h-64 bg-slate-900">
+            <div ref={mapRef} className="w-full h-full z-10" />
+            <button
+              onClick={handleUseCurrentGPS}
+              disabled={gpsLoading}
+              className="absolute bottom-3 right-3 z-20 bg-slate-900/90 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg"
+            >
+              <Compass className={`w-4 h-4 ${gpsLoading ? 'animate-spin' : ''}`} />
+              {gpsLoading ? 'Ubicando...' : 'Usar mi GPS'}
+            </button>
+          </div>
 
-              <h2 className="text-xl font-bold text-white mb-4">¿A dónde vamos hoy?</h2>
-
-              <div className="space-y-3">
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">Punto de partida</label>
-                  <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5">
-                    <MapPin className="w-4 h-4 text-emerald-400 shrink-0" />
-                    <select
-                      value={pickup}
-                      onChange={(e) => setPickup(e.target.value)}
-                      className="bg-transparent text-sm text-white w-full focus:outline-none"
-                    >
-                      {PICKUPS.map((p) => (
-                        <option key={p} value={p} className="bg-slate-900">
-                          {p}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="text-xs text-slate-400 block mb-1">Destino</label>
-                  <div className="flex items-center gap-2 bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5">
-                    <Navigation className="w-4 h-4 text-amber-400 shrink-0" />
-                    <select
-                      value={destination.id}
-                      onChange={(e) =>
-                        setDestination(DESTINATIONS.find((d) => d.id === e.target.value))
-                      }
-                      className="bg-transparent text-sm text-white w-full focus:outline-none"
-                    >
-                      {DESTINATIONS.map((d) => (
-                        <option key={d.id} value={d.id} className="bg-slate-900">
-                          {d.name} ({d.miles} mi)
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              </div>
+          {/* Buscador de Direcciones */}
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-xl">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold tracking-widest text-emerald-400 uppercase">Connecticut Express</span>
+              <span className="text-xs text-slate-400">{routeStats.miles} mi • {routeStats.minutes} min</span>
             </div>
 
-            <div className="p-5">
-              {activeRiderRide ? (
-                <div className="bg-slate-950 border border-emerald-500/40 rounded-2xl p-4 space-y-4">
-                  <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold uppercase px-2.5 py-1 rounded-full bg-emerald-500/20 text-emerald-400">
-                      {activeRiderRide.status === 'requested' && 'Buscando conductor...'}
-                      {activeRiderRide.status === 'accepted' && 'Conductor en camino'}
-                      {activeRiderRide.status === 'arrived' && 'Tu conductor llegó'}
-                      {activeRiderRide.status === 'in_progress' && 'Viaje en curso'}
-                    </span>
-                    <span className="text-lg font-extrabold text-white">
-                      ${Number(activeRiderRide.fare).toFixed(2)}
-                    </span>
-                  </div>
-
-                  <div className="text-sm space-y-1.5 text-slate-300">
-                    <p><span className="text-slate-500">Origen:</span> {activeRiderRide.pickup_address}</p>
-                    <p><span className="text-slate-500">Destino:</span> {activeRiderRide.dropoff_address}</p>
-                    <p><span className="text-slate-500">Categoría:</span> {brandName} {activeRiderRide.tier}</p>
-                  </div>
-
-                  <div className="flex items-center gap-3 pt-2 border-t border-slate-800">
-                    <div className="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center">
-                      <User className="w-5 h-5 text-emerald-400" />
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-sm font-bold text-white">Jhon Valencia • 4.98 ★</p>
-                      <p className="text-xs text-slate-400">Mazda 3 Blanco • Placa BT 94756</p>
-                    </div>
-                  </div>
-
-                  {activeRiderRide.status === 'requested' && (
+            {/* Input Origen */}
+            <div className="relative">
+              <label className="text-xs text-slate-400 mb-1 block">Punto de partida</label>
+              <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 focus-within:border-emerald-500">
+                <MapPin className="w-4 h-4 text-emerald-400 mr-2 shrink-0" />
+                <input
+                  type="text"
+                  value={pickupText}
+                  onChange={(e) => searchAddress(e.target.value, 'pickup')}
+                  placeholder="Escribe dirección o ciudad..."
+                  className="bg-transparent w-full text-sm text-white focus:outline-none"
+                />
+              </div>
+              {pickupSuggestions.length > 0 && (
+                <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-30 overflow-hidden">
+                  {pickupSuggestions.map((item, idx) => (
                     <button
-                      onClick={() => updateRideStatus(activeRiderRide.id, 'cancelled')}
-                      className="w-full py-2.5 rounded-xl bg-red-500/15 hover:bg-red-500/25 text-red-400 text-xs font-bold transition"
+                      key={idx}
+                      onClick={() => {
+                        setPickupText(item.label);
+                        setPickupCoords({ lat: item.lat, lng: item.lng });
+                        setPickupSuggestions([]);
+                      }}
+                      className="w-full text-left px-3 py-2.5 text-xs hover:bg-slate-800 border-b border-slate-800/60 last:border-0 flex items-center gap-2"
                     >
-                      Cancelar solicitud
+                      <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span className="truncate">{item.label}</span>
                     </button>
-                  )}
+                  ))}
                 </div>
-              ) : (
-                <>
-                  <div className="flex items-center justify-between mb-3">
-                    <span className="text-xs font-semibold text-slate-400">
-                      Elige tu servicio ({destination.baseTime})
-                    </span>
-                    {surgeMultiplier > 1 && (
-                      <span className="text-xs text-amber-400 font-semibold">
-                        Tarifa dinámica {surgeMultiplier}x
-                      </span>
-                    )}
-                  </div>
-
-                  <div className="space-y-2.5 mb-4">
-                    {TIERS.map((tier) => {
-                      const price = calculateFare(tier);
-                      const isSelected = selectedTier === tier.id;
-                      return (
-                        <button
-                          key={tier.id}
-                          onClick={() => setSelectedTier(tier.id)}
-                          className={`w-full flex items-center justify-between p-3.5 rounded-2xl border text-left transition ${
-                            isSelected
-                              ? 'bg-emerald-500/15 border-emerald-500'
-                              : 'bg-slate-950 border-slate-800 hover:border-slate-700'
-                          }`}
-                        >
-                          <div className="flex items-center gap-3">
-                            <div className="p-2.5 rounded-xl bg-slate-900 text-emerald-400">
-                              <Car className="w-5 h-5" />
-                            </div>
-                            <div>
-                              <p className="font-bold text-sm text-white">
-                                {brandName} {tier.id}
-                              </p>
-                              <p className="text-xs text-slate-400">{tier.desc}</p>
-                            </div>
-                          </div>
-                          <div className="text-right">
-                            <p className="font-extrabold text-base text-white">${price.toFixed(2)}</p>
-                            <p className="text-xs text-emerald-400">{tier.eta}</p>
-                          </div>
-                        </button>
-                      );
-                    })}
-                  </div>
-
-                  <div className="flex items-center justify-between mb-4 px-1">
-                    <button
-                      onClick={() => setPromoApplied(!promoApplied)}
-                      className="text-xs flex items-center gap-1.5 text-emerald-400 hover:underline"
-                    >
-                      <Sparkles className="w-3.5 h-3.5" />
-                      {promoApplied ? 'Descuento 15% aplicado (CT15)' : 'Aplicar promo primer viaje (-15%)'}
-                    </button>
-                    <span className="text-xs text-slate-400">Apple Pay / •••• 4321</span>
-                  </div>
-
-                  <button
-                    onClick={handleRequestRide}
-                    disabled={submitting}
-                    className="w-full py-3.5 rounded-2xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-sm transition flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/20"
-                  >
-                    {submitting ? 'Conectando...' : `Confirmar ${brandName} ${selectedTier}`}
-                    <ChevronRight className="w-4 h-4" />
-                  </button>
-                </>
               )}
             </div>
-          </div>
-        )}
 
-        {/* ================= VISTA 2: APP CONDUCTOR ================= */}
-        {activeTab === 'driver' && (
-          <div className="max-w-md mx-auto bg-slate-900 border border-slate-800 rounded-3xl overflow-hidden shadow-2xl p-5 space-y-5">
-            <div className="flex items-center justify-between bg-slate-950 p-4 rounded-2xl border border-slate-800">
-              <div>
-                <p className="text-xs text-slate-400">Estado del Conductor</p>
-                <p className={`font-bold text-base ${driverOnline ? 'text-emerald-400' : 'text-slate-500'}`}>
-                  {driverOnline ? 'En línea • Recibiendo viajes' : 'Desconectado'}
-                </p>
+            {/* Input Destino */}
+            <div className="relative">
+              <label className="text-xs text-slate-400 mb-1 block">Destino</label>
+              <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 focus-within:border-emerald-500">
+                <Navigation className="w-4 h-4 text-amber-400 mr-2 shrink-0" />
+                <input
+                  type="text"
+                  value={dropoffText}
+                  onChange={(e) => searchAddress(e.target.value, 'dropoff')}
+                  placeholder="¿A dónde vas? (Ej. JFK Airport, New Haven...)"
+                  className="bg-transparent w-full text-sm text-white focus:outline-none"
+                />
               </div>
-              <button
-                onClick={() => setDriverOnline(!driverOnline)}
-                className={`px-4 py-2 rounded-xl font-bold text-xs transition ${
-                  driverOnline
-                    ? 'bg-emerald-500 text-slate-950'
-                    : 'bg-slate-800 text-slate-300'
-                }`}
-              >
-                {driverOnline ? 'Conectado' : 'Conectarse'}
-              </button>
+              {dropoffSuggestions.length > 0 && (
+                <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-30 overflow-hidden">
+                  {dropoffSuggestions.map((item, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        setDropoffText(item.label);
+                        setDropoffCoords({ lat: item.lat, lng: item.lng });
+                        setDropoffSuggestions([]);
+                      }}
+                      className="w-full text-left px-3 py-2.5 text-xs hover:bg-slate-800 border-b border-slate-800/60 last:border-0 flex items-center gap-2"
+                    >
+                      <Navigation className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                      <span className="truncate">{item.label}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800">
-                <p className="text-xs text-slate-400">Ganancia Neta Hoy</p>
-                <p className="text-2xl font-extrabold text-emerald-400 mt-1">
-                  ${totalDriverNet.toFixed(2)}
-                </p>
-              </div>
-              <div className="bg-slate-950 p-4 rounded-2xl border border-slate-800">
-                <p className="text-xs text-slate-400">Viajes Completados</p>
-                <p className="text-2xl font-extrabold text-white mt-1">{completedRides.length}</p>
-              </div>
-            </div>
-
-            {!driverOnline ? (
-              <div className="text-center py-10 text-slate-500 text-sm">
-                Conéctate para empezar a recibir solicitudes en tiempo real.
-              </div>
-            ) : activeDriverRide ? (
-              <div className="bg-slate-950 border border-emerald-500/40 rounded-2xl p-4 space-y-4">
-                <div className="flex justify-between items-center">
-                  <span className="text-xs font-bold uppercase px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300">
-                    Viaje Activo ({brandName} {activeDriverRide.tier})
-                  </span>
-                  <span className="text-lg font-extrabold text-emerald-400">
-                    +${Number(activeDriverRide.driver_earnings).toFixed(2)} neto
-                  </span>
-                </div>
-
-                <div className="space-y-2 text-sm">
-                  <p className="text-slate-300">
-                    <strong className="text-white">Recoger:</strong> {activeDriverRide.pickup_address}
-                  </p>
-                  <p className="text-slate-300">
-                    <strong className="text-white">Dejar:</strong> {activeDriverRide.dropoff_address}
-                  </p>
-                </div>
-
-                {activeDriverRide.status === 'accepted' && (
+            {/* Tarifas */}
+            <div className="space-y-2 pt-2">
+              {SERVICE_TIERS.map((tier) => {
+                const active = selectedTier === tier.id;
+                return (
                   <button
-                    onClick={() => updateRideStatus(activeDriverRide.id, 'arrived')}
-                    className="w-full py-3 rounded-xl bg-amber-400 text-slate-950 font-extrabold text-sm"
+                    key={tier.id}
+                    onClick={() => setSelectedTier(tier.id)}
+                    className={`w-full flex items-center justify-between p-3 rounded-xl border transition text-left ${
+                      active ? 'bg-emerald-950/40 border-emerald-500' : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
+                    }`}
                   >
-                    Marcar: Llegué al punto de recogida
-                  </button>
-                )}
-                {activeDriverRide.status === 'arrived' && (
-                  <button
-                    onClick={() => updateRideStatus(activeDriverRide.id, 'in_progress')}
-                    className="w-full py-3 rounded-xl bg-emerald-500 text-slate-950 font-extrabold text-sm"
-                  >
-                    Iniciar viaje con pasajero
-                  </button>
-                )}
-                {activeDriverRide.status === 'in_progress' && (
-                  <button
-                    onClick={() => updateRideStatus(activeDriverRide.id, 'completed')}
-                    className="w-full py-3 rounded-xl bg-emerald-500 text-slate-950 font-extrabold text-sm"
-                  >
-                    Finalizar viaje y cobrar
-                  </button>
-                )}
-              </div>
-            ) : pendingRequests.length > 0 ? (
-              <div className="space-y-3">
-                <p className="text-xs font-bold uppercase text-amber-400 tracking-wider">
-                  Nuevas solicitudes disponibles ({pendingRequests.length})
-                </p>
-                {pendingRequests.map((req) => (
-                  <div
-                    key={req.id}
-                    className="bg-slate-950 border border-amber-500/40 rounded-2xl p-4 space-y-3"
-                  >
-                    <div className="flex justify-between items-start">
-                      <div>
-                        <span className="text-xs font-bold text-emerald-400">
-                          {brandName} {req.tier}
-                        </span>
-                        <p className="text-sm font-bold text-white mt-0.5">{req.pickup_address}</p>
-                        <p className="text-xs text-slate-400 mt-0.5">→ {req.dropoff_address}</p>
+                    <div className="flex items-center gap-3">
+                      <div className={`p-2 rounded-lg ${active ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'}`}>
+                        <Car className="w-5 h-5" />
                       </div>
-                      <div className="text-right">
-                        <p className="text-lg font-extrabold text-emerald-400">
-                          ${Number(req.driver_earnings).toFixed(2)}
-                        </p>
-                        <p className="text-[11px] text-slate-500">
-                          Total: ${Number(req.fare).toFixed(2)}
-                        </p>
+                      <div>
+                        <div className="font-bold text-sm">{tier.name}</div>
+                        <div className="text-xs text-slate-400">{tier.desc}</div>
                       </div>
                     </div>
+                    <div className="text-right">
+                      <div className="font-bold text-base text-white">$ {calculatePrice(tier)}</div>
+                      <div className="text-[11px] text-emerald-400">{tier.eta}</div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
 
-                    <div className="flex gap-2">
+            <button
+              onClick={handleRequestRide}
+              disabled={loading}
+              className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3.5 rounded-xl transition shadow-lg shadow-emerald-500/20 text-sm"
+            >
+              {loading ? 'Solicitando...' : `Confirmar ${selectedTier}`}
+            </button>
+          </div>
+        </main>
+      )}
+
+      {/* VISTA CONDUCTOR */}
+      {role === 'driver' && (
+        <main className="max-w-xl mx-auto px-4 pt-6 space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-bold">Panel del Conductor</h2>
+            <button onClick={fetchRides} className="text-xs text-emerald-400 flex items-center gap-1">
+              <RefreshCw className="w-3.5 h-3.5" /> Actualizar
+            </button>
+          </div>
+
+          {activeRides.length === 0 ? (
+            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400 text-sm">
+              No hay solicitudes activas en este momento.
+            </div>
+          ) : (
+            activeRides.map((ride) => {
+              const driverNet = (Number(ride.fare) * 0.85).toFixed(2);
+              const mapsDestination = ride.dropoff_lat && ride.dropoff_lng
+                ? `${ride.dropoff_lat},${ride.dropoff_lng}`
+                : encodeURIComponent(ride.dropoff);
+
+              return (
+                <div key={ride.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-lg">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 uppercase">
+                        {ride.service_type} • {ride.status}
+                      </span>
+                      <div className="text-xs text-slate-400 mt-1">{ride.distance_miles} mi • {ride.duration_min} min</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-lg font-black text-emerald-400">$ {driverNet}</div>
+                      <div className="text-[11px] text-slate-400">Tu ganancia (85%)</div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 text-xs bg-slate-950 p-3 rounded-xl border border-slate-800">
+                    <div className="flex items-start gap-2">
+                      <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <span><strong>Recoger:</strong> {ride.pickup}</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Navigation className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <span><strong>Destino:</strong> {ride.dropoff}</span>
+                    </div>
+                  </div>
+
+                  {/* Botón Abrir Navegación GPS */}
+                  <a
+                    href={`https://www.google.com/maps/dir/?api=1&destination=${mapsDestination}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 border border-slate-700"
+                  >
+                    <ExternalLink className="w-4 h-4 text-emerald-400" />
+                    Navegar con GPS (Google / Apple Maps)
+                  </a>
+
+                  {/* Botones de flujo de viaje */}
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    {ride.status === 'pending' && (
                       <button
-                        onClick={() => updateRideStatus(req.id, 'cancelled')}
-                        className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold"
-                      >
-                        Rechazar
-                      </button>
-                      <button
-                        onClick={() => updateRideStatus(req.id, 'accepted')}
-                        className="flex-2 w-2/3 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-extrabold"
+                        onClick={() => updateRideStatus(ride.id, 'accepted')}
+                        className="col-span-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
                       >
                         Aceptar Viaje
                       </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-10 bg-slate-950 rounded-2xl border border-slate-800">
-                <Car className="w-8 h-8 text-slate-600 mx-auto mb-2" />
-                <p className="text-sm text-slate-400">Esperando solicitudes de pasajeros...</p>
-                <p className="text-xs text-slate-600 mt-1">
-                  Prueba pedir un viaje desde la pestaña "App Cliente"
-                </p>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ================= VISTA 3: PANEL ADMIN ================= */}
-        {activeTab === 'admin' && (
-          <div className="space-y-6">
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
-                <p className="text-xs text-slate-400">Facturación Bruta Total</p>
-                <p className="text-3xl font-extrabold text-white mt-1">${totalRevenue.toFixed(2)}</p>
-              </div>
-              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
-                <p className="text-xs text-slate-400">Comisión Plataforma ({Math.round(commissionRate * 100)}%)</p>
-                <p className="text-3xl font-extrabold text-emerald-400 mt-1">
-                  ${(totalRevenue - totalDriverNet).toFixed(2)}
-                </p>
-              </div>
-              <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl">
-                <p className="text-xs text-slate-400">Viajes Registrados en DB</p>
-                <p className="text-3xl font-extrabold text-white mt-1">{rides.length}</p>
-              </div>
-            </div>
-
-            <div className="bg-slate-900 border border-slate-800 p-5 rounded-2xl grid grid-cols-1 sm:grid-cols-2 gap-6">
-              <div>
-                <label className="text-xs font-bold text-slate-300 flex justify-between mb-2">
-                  <span>Tarifa Dinámica (Surge Pricing)</span>
-                  <span className="text-amber-400">{surgeMultiplier.toFixed(1)}x</span>
-                </label>
-                <input
-                  type="range"
-                  min="1"
-                  max="2.5"
-                  step="0.1"
-                  value={surgeMultiplier}
-                  onChange={(e) => setSurgeMultiplier(parseFloat(e.target.value))}
-                  className="w-full accent-emerald-500"
-                />
-              </div>
-
-              <div>
-                <label className="text-xs font-bold text-slate-300 flex justify-between mb-2">
-                  <span>Comisión de la Plataforma</span>
-                  <span className="text-emerald-400">{Math.round(commissionRate * 100)}%</span>
-                </label>
-                <input
-                  type="range"
-                  min="0.05"
-                  max="0.30"
-                  step="0.05"
-                  value={commissionRate}
-                  onChange={(e) => setCommissionRate(parseFloat(e.target.value))}
-                  className="w-full accent-emerald-500"
-                />
-              </div>
-            </div>
-
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-              <div className="px-5 py-4 border-b border-slate-800 flex justify-between items-center">
-                <h3 className="font-bold text-sm text-white">Historial en Tiempo Real (Supabase)</h3>
-                <button
-                  onClick={fetchRides}
-                  className="text-xs text-emerald-400 hover:underline flex items-center gap-1"
-                >
-                  <RefreshCw className="w-3.5 h-3.5" /> Actualizar
-                </button>
-              </div>
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-slate-950 text-slate-400 uppercase">
-                    <tr>
-                      <th className="px-4 py-3">Ruta</th>
-                      <th className="px-4 py-3">Servicio</th>
-                      <th className="px-4 py-3">Tarifa</th>
-                      <th className="px-4 py-3">Estado</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-800">
-                    {rides.map((r) => (
-                      <tr key={r.id} className="hover:bg-slate-800/40">
-                        <td className="px-4 py-3">
-                          <p className="font-semibold text-white">{r.pickup_address}</p>
-                          <p className="text-slate-400">→ {r.dropoff_address}</p>
-                        </td>
-                        <td className="px-4 py-3 font-bold text-emerald-400">
-                          {brandName} {r.tier}
-                        </td>
-                        <td className="px-4 py-3 font-bold text-white">
-                          ${Number(r.fare).toFixed(2)}
-                        </td>
-                        <td className="px-4 py-3">
-                          <span className="px-2 py-1 rounded-full bg-slate-800 text-slate-200 font-semibold">
-                            {r.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                    {rides.length === 0 && (
-                      <tr>
-                        <td colSpan="4" className="px-4 py-8 text-center text-slate-500">
-                          Aún no hay viajes guardados en Supabase.
-                        </td>
-                      </tr>
                     )}
-                  </tbody>
-                </table>
-              </div>
+                    {ride.status === 'accepted' && (
+                      <button
+                        onClick={() => updateRideStatus(ride.id, 'in_progress')}
+                        className="col-span-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
+                      >
+                        Pasajero a bordo (Iniciar viaje)
+                      </button>
+                    )}
+                    {ride.status === 'in_progress' && (
+                      <button
+                        onClick={() => updateRideStatus(ride.id, 'completed')}
+                        className="col-span-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
+                      >
+                        Finalizar y Cobrar ($ {ride.fare})
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </main>
+      )}
+
+      {/* VISTA ADMINISTRACIÓN */}
+      {role === 'admin' && (
+        <main className="max-w-3xl mx-auto px-4 pt-6 space-y-4">
+          <h2 className="text-lg font-bold">Administración Transy</h2>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+              <div className="text-xs text-slate-400">Viajes Completados</div>
+              <div className="text-xl font-black mt-1">{completedRides.length}</div>
+            </div>
+            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+              <div className="text-xs text-slate-400">Facturación Bruta</div>
+              <div className="text-xl font-black text-emerald-400 mt-1">$ {totalRevenue.toFixed(2)}</div>
+            </div>
+            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+              <div className="text-xs text-slate-400">Comisión App (15%)</div>
+              <div className="text-xl font-black text-amber-400 mt-1">$ {(totalRevenue * 0.15).toFixed(2)}</div>
             </div>
           </div>
-        )}
-      </main>
+
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+            <div className="p-3 border-b border-slate-800 text-xs font-bold text-slate-400 uppercase">Historial en Supabase</div>
+            <div className="divide-y divide-slate-800">
+              {rides.map((r) => (
+                <div key={r.id} className="p-3 flex justify-between items-center text-xs">
+                  <div>
+                    <div className="font-semibold text-white">{r.pickup} → {r.dropoff}</div>
+                    <div className="text-slate-400">{r.service_type} • Estado: {r.status}</div>
+                  </div>
+                  <div className="font-bold text-emerald-400">$ {Number(r.fare).toFixed(2)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </main>
+      )}
     </div>
   );
 }
-
