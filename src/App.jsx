@@ -80,9 +80,9 @@ export default function App() {
     if (!mapRef.current || mapInstance.current) return;
 
     const map = L.map(mapRef.current, { zoomControl: false }).setView([pickupCoords.lat, pickupCoords.lng], 12);
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-      attribution: '&copy; OpenStreetMap &copy; CARTO'
-    }).addTo(map);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap'
+}).addTo(map);
 
     layerGroup.current = L.layerGroup().addTo(map);
     mapInstance.current = map;
