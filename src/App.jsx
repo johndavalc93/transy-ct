@@ -14,9 +14,14 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-// CONFIGURACIÓN RÁPIDA (Pon aquí tu PIN y tu número de teléfono)
+// CONFIGURACIÓN RÁPIDA (Pon aquí tu PIN, teléfono y datos del conductor)
 const ACCESS_PIN = '1804';
 const DRIVER_PHONE = '13234554002'; // Formato: 1 + código de área + número (sin espacios ni guiones)
+const DRIVER_PROFILE = {
+  name: 'John Valencia',
+  vehicle: 'White 2016 Mazda 3',
+  photoUrl: '' // Opcional: pega aquí una URL de foto (ej. https://.../foto.jpg). Si está vacío, usa un avatar inicial automático.
+};
 
 const TRANSLATIONS = {
   es: {
@@ -52,6 +57,8 @@ const TRANSLATIONS = {
     requesting: 'Solicitando...',
     confirmBtn: 'Confirmar',
     defaultPassenger: 'Pasajero Transy',
+    driverCardLabel: 'Tu conductor asignado',
+    vehicleLabel: 'Vehículo',
     originWord: 'Origen',
     dropoffWord: 'Destino',
     serviceWord: 'Servicio',
@@ -108,6 +115,8 @@ const TRANSLATIONS = {
     requesting: 'Requesting...',
     confirmBtn: 'Confirm',
     defaultPassenger: 'Transy Passenger',
+    driverCardLabel: 'Assigned driver',
+    vehicleLabel: 'Vehicle',
     originWord: 'Pickup',
     dropoffWord: 'Dropoff',
     serviceWord: 'Service',
@@ -634,7 +643,7 @@ export default function App() {
   const completedRides = rides.filter((r) => r.status === 'completed');
   const totalRevenue = completedRides.reduce((sum, r) => sum + Number(r.fare || 0), 0);
 
-  const canMessageDriver = trackedRide && (trackedRide.status === 'accepted' || trackedRide.status === 'in_progress');
+  const hasAssignedDriver = trackedRide && (trackedRide.status === 'accepted' || trackedRide.status === 'in_progress');
   const outboundMessage = trackedRide
     ? t.smsTemplate(
         trackedRide.passenger_name,
@@ -643,6 +652,13 @@ export default function App() {
         rideScheduleMeta[trackedRide.id] || t.nowValue
       )
     : '';
+
+  const driverInitials = (DRIVER_PROFILE.name || 'T')
+    .split(' ')
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0].toUpperCase())
+    .join('');
 
   return (
     <div className="min-h-screen w-full overflow-x-hidden bg-slate-950 text-slate-100 font-sans pb-12">
@@ -820,6 +836,37 @@ export default function App() {
                 </p>
               </div>
 
+              {hasAssignedDriver && (
+                <div className="bg-slate-950 border border-emerald-500/30 rounded-xl p-3.5 flex items-center gap-3.5">
+                  {DRIVER_PROFILE.photoUrl ? (
+                    <img
+                      src={DRIVER_PROFILE.photoUrl}
+                      alt={DRIVER_PROFILE.name}
+                      className="w-14 h-14 rounded-full object-cover border-2 border-emerald-400 shrink-0"
+                    />
+                  ) : (
+                    <div className="w-14 h-14 rounded-full bg-emerald-500/20 border-2 border-emerald-400 flex items-center justify-center text-emerald-300 font-black text-base shrink-0">
+                      {driverInitials}
+                    </div>
+                  )}
+
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="text-[11px] uppercase tracking-wider font-bold text-emerald-400">
+                      {t.driverCardLabel}
+                    </div>
+                    <div className="text-sm font-bold text-white truncate">
+                      {DRIVER_PROFILE.name}
+                    </div>
+                    <div className="flex items-center gap-1.5 text-xs text-slate-300 truncate">
+                      <Car className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span>
+                        <strong>{t.vehicleLabel}:</strong> {DRIVER_PROFILE.vehicle}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               <div className="space-y-2 text-xs bg-slate-950 p-3.5 rounded-xl border border-slate-800">
                 <div className="flex items-start gap-2">
                   <Clock className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
@@ -835,7 +882,7 @@ export default function App() {
                 </div>
               </div>
 
-              {canMessageDriver && (
+              {hasAssignedDriver && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <a
                     href={`sms:+${DRIVER_PHONE}?&body=${encodeURIComponent(outboundMessage)}`}
