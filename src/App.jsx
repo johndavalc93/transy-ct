@@ -15,8 +15,8 @@ L.Icon.Default.mergeOptions({
 });
 
 // CONFIGURACIÓN RÁPIDA (Cambia tu PIN y tu teléfono de WhatsApp aquí)
-const ACCESS_PIN = '2026';
-const DRIVER_PHONE = '12035550199'; // Formato: 1 + código de área + número (sin espacios ni guiones)
+const ACCESS_PIN = '1804';
+const DRIVER_PHONE = '13234554002'; // Formato: 1 + código de área + número (sin espacios ni guiones)
 
 const SERVICE_TIERS = [
   { id: 'TRANSY X', name: 'TRANSY X', desc: 'Económico • 4 pasajeros', base: 4.5, perMile: 1.65, perMin: 0.25, eta: '3 min' },
