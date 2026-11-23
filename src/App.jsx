@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   MapPin, Navigation, Car, Shield, AlertCircle, RefreshCw,
-  Compass, ExternalLink, MessageCircle, MessageSquare, User, X, Move, Calendar, Clock, Check
+  Compass, ExternalLink, MessageCircle, MessageSquare, User, X, Move, Calendar, Clock, Check, Radio
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import L from 'leaflet';
@@ -20,7 +20,7 @@ const DRIVER_PHONE = '13234554002'; // Formato: 1 + código de área + número (
 const DRIVER_PROFILE = {
   name: 'John Valencia',
   vehicle: 'White 2016 Mazda 3',
-  photoUrl: '' // Opcional: pega aquí una URL de foto (ej. https://.../foto.jpg). Si está vacío, usa un avatar inicial automático.
+  photoUrl: ''
 };
 
 const TRANSLATIONS = {
@@ -59,6 +59,12 @@ const TRANSLATIONS = {
     defaultPassenger: 'Pasajero Transy',
     driverCardLabel: 'Tu conductor asignado',
     vehicleLabel: 'Vehículo',
+    liveToPickup: 'Conductor en camino a recogerte',
+    liveToDropoff: 'En camino a tu destino',
+    liveRemaining: 'restantes en vivo',
+    waitingDriverGps: 'Esperando señal GPS del conductor...',
+    liveTrackingBtn: 'GPS en vivo activo',
+    startLiveTrackingBtn: 'Transmitir mi GPS en vivo',
     originWord: 'Origen',
     dropoffWord: 'Destino',
     serviceWord: 'Servicio',
@@ -117,6 +123,12 @@ const TRANSLATIONS = {
     defaultPassenger: 'Transy Passenger',
     driverCardLabel: 'Assigned driver',
     vehicleLabel: 'Vehicle',
+    liveToPickup: 'Driver on the way to pick you up',
+    liveToDropoff: 'En route to your destination',
+    liveRemaining: 'remaining live',
+    waitingDriverGps: 'Waiting for live driver GPS...',
+    liveTrackingBtn: 'Live GPS active',
+    startLiveTrackingBtn: 'Broadcast my live GPS',
     originWord: 'Pickup',
     dropoffWord: 'Dropoff',
     serviceWord: 'Service',
@@ -178,6 +190,7 @@ export default function App() {
   const [currentRideId, setCurrentRideId] = useState(() => localStorage.getItem('transy_active_ride') || null);
   const [dbError, setDbError] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [liveGpsEnabled, setLiveGpsEnabled] = useState(false);
 
   const [isScheduled, setIsScheduled] = useState(false);
   const [scheduledDate, setScheduledDate] = useState(() => {
@@ -205,6 +218,7 @@ export default function App() {
   const searchTimerRef = useRef(null);
 
   const [routeStats, setRouteStats] = useState({ miles: 9.8, minutes: 18 });
+  const [liveLegStats, setLiveLegStats] = useState(null);
   const [selectedTier, setSelectedTier] = useState('TRANSY X');
   const [passengerName, setPassengerName] = useState('');
   const [gpsLoading, setGpsLoading] = useState(false);
@@ -213,6 +227,11 @@ export default function App() {
   const mapInstance = useRef(null);
   const layerGroup = useRef(null);
   const pinAdjustModeRef = useRef(false);
+
+  const trackedRide = rides.find((r) => r.id === currentRideId);
+  const activeRides = rides.filter((r) => r.status !== 'completed' && r.status !== 'cancelled');
+  const completedRides = rides.filter((r) => r.status === 'completed');
+  const totalRevenue = completedRides.reduce((sum, r) => sum + Number(r.fare || 0), 0);
 
   useEffect(() => {
     pinAdjustModeRef.current = pinAdjustMode;
@@ -251,6 +270,37 @@ export default function App() {
       supabase.removeChannel(channel);
     };
   }, []);
+
+  const pushDriverLocation = async (ride, lat, lng) => {
+    if (!ride?.id) return;
+    await supabase
+      .from('rides')
+      .update({ driver_lat: lat, driver_lng: lng })
+      .eq('id', ride.id);
+  };
+
+  useEffect(() => {
+    if (!liveGpsEnabled || activeRides.length === 0) return;
+    if (!navigator.geolocation) {
+      setLiveGpsEnabled(false);
+      return;
+    }
+
+    const primaryRide = activeRides[0];
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        pushDriverLocation(primaryRide, pos.coords.latitude, pos.coords.longitude);
+      },
+      () => {
+        // Mantiene la última posición conocida si falla una lectura
+      },
+      { enableHighAccuracy: true, maximumAge: 3000, timeout: 8000 }
+    );
+
+    return () => {
+      navigator.geolocation.clearWatch(watchId);
+    };
+  }, [liveGpsEnabled, activeRides.length]);
 
   const handleRoleSwitch = (targetRole) => {
     if (targetRole === 'passenger' || isUnlocked) {
@@ -315,7 +365,94 @@ export default function App() {
   }, [role]);
 
   useEffect(() => {
-    const updateRoute = async () => {
+    if (role !== 'passenger') return;
+
+    const updateLiveOrQuoteRoute = async () => {
+      const isLiveStage =
+        trackedRide && (trackedRide.status === 'accepted' || trackedRide.status === 'in_progress');
+
+      if (isLiveStage) {
+        const pLat = Number(trackedRide.pickup_lat ?? pickupCoords.lat);
+        const pLng = Number(trackedRide.pickup_lng ?? pickupCoords.lng);
+        const dLat = Number(trackedRide.dropoff_lat ?? dropoffCoords.lat);
+        const dLng = Number(trackedRide.dropoff_lng ?? dropoffCoords.lng);
+
+        const hasDriverCoords =
+          Number.isFinite(Number(trackedRide.driver_lat)) &&
+          Number.isFinite(Number(trackedRide.driver_lng));
+
+        const drvLat = hasDriverCoords
+          ? Number(trackedRide.driver_lat)
+          : trackedRide.status === 'accepted'
+          ? pLat + 0.025
+          : pLat;
+        const drvLng = hasDriverCoords
+          ? Number(trackedRide.driver_lng)
+          : trackedRide.status === 'accepted'
+          ? pLng - 0.025
+          : pLng;
+
+        const targetLat = trackedRide.status === 'accepted' ? pLat : dLat;
+        const targetLng = trackedRide.status === 'accepted' ? pLng : dLng;
+
+        try {
+          const url = `https://router.project-osrm.org/route/v1/driving/${drvLng},${drvLat};${targetLng},${targetLat}?overview=full&geometries=geojson`;
+          const res = await fetch(url);
+          const json = await res.json();
+
+          if (json.routes && json.routes.length > 0) {
+            const route = json.routes[0];
+            const miles = +(route.distance * 0.000621371).toFixed(1);
+            const minutes = Math.max(1, Math.round(route.duration / 60));
+
+            setLiveLegStats({
+              phase: trackedRide.status,
+              miles,
+              minutes,
+              hasDriverCoords
+            });
+
+            if (mapInstance.current && layerGroup.current) {
+              layerGroup.current.clearLayers();
+              const coords = route.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
+              const polyline = L.polyline(coords, {
+                color: trackedRide.status === 'accepted' ? '#10b981' : '#38bdf8',
+                weight: 5
+              }).addTo(layerGroup.current);
+
+              const driverMarker = L.circleMarker([drvLat, drvLng], {
+                radius: 9,
+                fillColor: '#10b981',
+                color: '#ffffff',
+                weight: 2.5,
+                opacity: 1,
+                fillOpacity: 0.95
+              })
+                .bindPopup(DRIVER_PROFILE.name)
+                .addTo(layerGroup.current);
+
+              L.marker([pLat, pLng]).addTo(layerGroup.current);
+              if (trackedRide.status === 'in_progress') {
+                L.marker([dLat, dLng]).addTo(layerGroup.current);
+              }
+
+              const bounds = L.latLngBounds([
+                ...coords,
+                driverMarker.getLatLng(),
+                [pLat, pLng],
+                [dLat, dLng]
+              ]);
+              mapInstance.current.fitBounds(bounds, { padding: [35, 35] });
+            }
+            return;
+          }
+        } catch (err) {
+          console.error('Error actualizando ruta en vivo:', err);
+        }
+      }
+
+      setLiveLegStats(null);
+
       try {
         const url = `https://router.project-osrm.org/route/v1/driving/${pickupCoords.lng},${pickupCoords.lat};${dropoffCoords.lng},${dropoffCoords.lat}?overview=full&geometries=geojson`;
         const res = await fetch(url);
@@ -348,8 +485,8 @@ export default function App() {
       }
     };
 
-    updateRoute();
-  }, [pickupCoords, dropoffCoords, role]);
+    updateLiveOrQuoteRoute();
+  }, [pickupCoords, dropoffCoords, role, trackedRide]);
 
   const buildViewbox = () => {
     const centerLat = pickupCoords.lat || 41.3839;
@@ -630,18 +767,38 @@ export default function App() {
 
   const handleDismissTrackedRide = () => {
     setCurrentRideId(null);
+    setLiveLegStats(null);
     localStorage.removeItem('transy_active_ride');
   };
 
-  const updateRideStatus = async (id, newStatus) => {
-    const { error } = await supabase.from('rides').update({ status: newStatus }).eq('id', id);
+  const updateRideStatus = async (ride, newStatus) => {
+    const payload = { status: newStatus };
+
+    if (newStatus === 'accepted' && !ride.driver_lat && !ride.driver_lng && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          supabase
+            .from('rides')
+            .update({
+              status: newStatus,
+              driver_lat: pos.coords.latitude,
+              driver_lng: pos.coords.longitude
+            })
+            .eq('id', ride.id)
+            .then(() => fetchRides());
+        },
+        async () => {
+          await supabase.from('rides').update(payload).eq('id', ride.id);
+          fetchRides();
+        },
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
+      return;
+    }
+
+    const { error } = await supabase.from('rides').update(payload).eq('id', ride.id);
     if (!error) fetchRides();
   };
-
-  const trackedRide = rides.find((r) => r.id === currentRideId);
-  const activeRides = rides.filter((r) => r.status !== 'completed' && r.status !== 'cancelled');
-  const completedRides = rides.filter((r) => r.status === 'completed');
-  const totalRevenue = completedRides.reduce((sum, r) => sum + Number(r.fare || 0), 0);
 
   const hasAssignedDriver = trackedRide && (trackedRide.status === 'accepted' || trackedRide.status === 'in_progress');
   const outboundMessage = trackedRide
@@ -781,41 +938,62 @@ export default function App() {
           <div className="space-y-1.5">
             <div
               className={`relative rounded-2xl overflow-hidden border shadow-xl bg-slate-900 transition-all duration-200 ${
-                pinAdjustMode
-                  ? 'h-96 sm:h-[28rem] border-emerald-500 ring-2 ring-emerald-500/30'
+                pinAdjustMode || hasAssignedDriver
+                  ? 'h-80 sm:h-96 border-emerald-500/70'
                   : 'h-56 sm:h-64 border-slate-800'
               }`}
             >
               <div ref={mapRef} className="w-full h-full z-10" />
 
-              <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setPinAdjustMode((prev) => !prev)}
-                  className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg border transition ${
-                    pinAdjustMode
-                      ? 'bg-emerald-500 text-slate-950 border-emerald-300 font-bold'
-                      : 'bg-slate-900/90 hover:bg-slate-800 text-white border-slate-700'
-                  }`}
-                >
-                  {pinAdjustMode ? <Check className="w-3.5 h-3.5" /> : <Move className="w-3.5 h-3.5" />}
-                  {pinAdjustMode ? t.pinModeActive : t.pinModeBtn}
-                </button>
+              {hasAssignedDriver && liveLegStats && (
+                <div className="absolute top-3 left-3 right-3 z-20 bg-slate-950/90 backdrop-blur border border-emerald-500/40 rounded-xl px-3 py-2 flex items-center justify-between gap-2 shadow-lg">
+                  <div className="min-w-0">
+                    <div className="text-[11px] font-bold text-emerald-400 truncate">
+                      {liveLegStats.phase === 'accepted' ? t.liveToPickup : t.liveToDropoff}
+                    </div>
+                    {!liveLegStats.hasDriverCoords && (
+                      <div className="text-[10px] text-slate-400 truncate">{t.waitingDriverGps}</div>
+                    )}
+                  </div>
+                  <div className="text-right shrink-0">
+                    <div className="text-xs font-black text-white">
+                      {liveLegStats.minutes} min • {liveLegStats.miles} mi
+                    </div>
+                    <div className="text-[10px] text-slate-400">{t.liveRemaining}</div>
+                  </div>
+                </div>
+              )}
 
-                {!pinAdjustMode && (
+              {!hasAssignedDriver && (
+                <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2">
                   <button
                     type="button"
-                    onClick={handleUseCurrentGPS}
-                    disabled={gpsLoading}
-                    className="bg-slate-900/90 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg"
+                    onClick={() => setPinAdjustMode((prev) => !prev)}
+                    className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg border transition ${
+                      pinAdjustMode
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-300 font-bold'
+                        : 'bg-slate-900/90 hover:bg-slate-800 text-white border-slate-700'
+                    }`}
                   >
-                    <Compass className={`w-4 h-4 ${gpsLoading ? 'animate-spin' : ''}`} />
-                    {gpsLoading ? t.locating : t.useGps}
+                    {pinAdjustMode ? <Check className="w-3.5 h-3.5" /> : <Move className="w-3.5 h-3.5" />}
+                    {pinAdjustMode ? t.pinModeActive : t.pinModeBtn}
                   </button>
-                )}
-              </div>
+
+                  {!pinAdjustMode && (
+                    <button
+                      type="button"
+                      onClick={handleUseCurrentGPS}
+                      disabled={gpsLoading}
+                      className="bg-slate-900/90 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg"
+                    >
+                      <Compass className={`w-4 h-4 ${gpsLoading ? 'animate-spin' : ''}`} />
+                      {gpsLoading ? t.locating : t.useGps}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
-            <p className="text-[11px] text-slate-400 px-1">{t.pinHint}</p>
+            {!hasAssignedDriver && <p className="text-[11px] text-slate-400 px-1">{t.pinHint}</p>}
           </div>
 
           {trackedRide ? (
@@ -832,7 +1010,10 @@ export default function App() {
                   {t.statuses[trackedRide.status]?.title}
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  {t.serviceWord} {trackedRide.service_type} • {trackedRide.distance_miles} mi ({trackedRide.duration_min} min)
+                  {t.serviceWord} {trackedRide.service_type} •{' '}
+                  {hasAssignedDriver && liveLegStats
+                    ? `${liveLegStats.miles} mi • ${liveLegStats.minutes} min (${t.liveRemaining})`
+                    : `${trackedRide.distance_miles} mi (${trackedRide.duration_min} min)`}
                 </p>
               </div>
 
@@ -914,7 +1095,7 @@ export default function App() {
               ) : (
                 <button
                   onClick={() => {
-                    updateRideStatus(trackedRide.id, 'cancelled');
+                    updateRideStatus(trackedRide, 'cancelled');
                     handleDismissTrackedRide();
                   }}
                   className="w-full bg-transparent hover:bg-red-950/40 text-slate-400 hover:text-red-300 font-medium py-2 rounded-xl text-xs"
@@ -1149,11 +1330,25 @@ export default function App() {
 
       {role === 'driver' && (
         <main className="max-w-xl mx-auto px-4 pt-6 space-y-4">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-lg font-bold">Panel del Conductor</h2>
-            <button onClick={fetchRides} className="text-xs text-emerald-400 flex items-center gap-1">
-              <RefreshCw className="w-3.5 h-3.5" /> Actualizar
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => setLiveGpsEnabled((prev) => !prev)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${
+                  liveGpsEnabled
+                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
+                    : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600'
+                }`}
+              >
+                <Radio className={`w-3.5 h-3.5 ${liveGpsEnabled ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`} />
+                {liveGpsEnabled ? t.liveTrackingBtn : t.startLiveTrackingBtn}
+              </button>
+              <button onClick={fetchRides} className="text-xs text-emerald-400 flex items-center gap-1">
+                <RefreshCw className="w-3.5 h-3.5" /> Actualizar
+              </button>
+            </div>
           </div>
 
           {activeRides.length === 0 ? (
@@ -1207,7 +1402,7 @@ export default function App() {
                   <div className="grid grid-cols-2 gap-2 pt-1">
                     {ride.status === 'pending' && (
                       <button
-                        onClick={() => updateRideStatus(ride.id, 'accepted')}
+                        onClick={() => updateRideStatus(ride, 'accepted')}
                         className="col-span-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
                       >
                         Aceptar Viaje
@@ -1215,7 +1410,7 @@ export default function App() {
                     )}
                     {ride.status === 'accepted' && (
                       <button
-                        onClick={() => updateRideStatus(ride.id, 'in_progress')}
+                        onClick={() => updateRideStatus(ride, 'in_progress')}
                         className="col-span-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
                       >
                         Pasajero a bordo (Iniciar viaje)
@@ -1223,7 +1418,7 @@ export default function App() {
                     )}
                     {ride.status === 'in_progress' && (
                       <button
-                        onClick={() => updateRideStatus(ride.id, 'completed')}
+                        onClick={() => updateRideStatus(ride, 'completed')}
                         className="col-span-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
                       >
                         Finalizar viaje
