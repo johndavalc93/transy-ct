@@ -63,8 +63,8 @@ const TRANSLATIONS = {
     liveToDropoff: 'En camino a tu destino',
     liveRemaining: 'restantes en vivo',
     waitingDriverGps: 'Esperando señal GPS del conductor...',
-    liveTrackingBtn: 'GPS en vivo activo',
-    startLiveTrackingBtn: 'Transmitir mi GPS en vivo',
+    autoGpsActive: 'GPS en vivo automático',
+    autoGpsIdle: 'GPS en espera de viaje activo',
     originWord: 'Origen',
     dropoffWord: 'Destino',
     serviceWord: 'Servicio',
@@ -127,8 +127,8 @@ const TRANSLATIONS = {
     liveToDropoff: 'En route to your destination',
     liveRemaining: 'remaining live',
     waitingDriverGps: 'Waiting for live driver GPS...',
-    liveTrackingBtn: 'Live GPS active',
-    startLiveTrackingBtn: 'Broadcast my live GPS',
+    autoGpsActive: 'Automatic live GPS',
+    autoGpsIdle: 'GPS ready for active ride',
     originWord: 'Pickup',
     dropoffWord: 'Dropoff',
     serviceWord: 'Service',
@@ -190,7 +190,7 @@ export default function App() {
   const [currentRideId, setCurrentRideId] = useState(() => localStorage.getItem('transy_active_ride') || null);
   const [dbError, setDbError] = useState(null);
   const [loading, setLoading] = useState(false);
-  const [liveGpsEnabled, setLiveGpsEnabled] = useState(false);
+  const [gpsStreaming, setGpsStreaming] = useState(false);
 
   const [isScheduled, setIsScheduled] = useState(false);
   const [scheduledDate, setScheduledDate] = useState(() => {
@@ -230,6 +230,7 @@ export default function App() {
 
   const trackedRide = rides.find((r) => r.id === currentRideId);
   const activeRides = rides.filter((r) => r.status !== 'completed' && r.status !== 'cancelled');
+  const liveDriverRides = rides.filter((r) => r.status === 'accepted' || r.status === 'in_progress');
   const completedRides = rides.filter((r) => r.status === 'completed');
   const totalRevenue = completedRides.reduce((sum, r) => sum + Number(r.fare || 0), 0);
 
@@ -279,28 +280,52 @@ export default function App() {
       .eq('id', ride.id);
   };
 
+  // Rastreo GPS automático para viajes aceptados o en curso sin requerir botón manual
   useEffect(() => {
-    if (!liveGpsEnabled || activeRides.length === 0) return;
-    if (!navigator.geolocation) {
-      setLiveGpsEnabled(false);
+    if (liveDriverRides.length === 0) {
+      setGpsStreaming(false);
       return;
     }
 
-    const primaryRide = activeRides[0];
+    if (!navigator.geolocation) {
+      setGpsStreaming(false);
+      return;
+    }
+
+    const targetRide = liveDriverRides[0];
+    setGpsStreaming(true);
+
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        pushDriverLocation(targetRide, pos.coords.latitude, pos.coords.longitude);
+      },
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 6000 }
+    );
+
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        pushDriverLocation(primaryRide, pos.coords.latitude, pos.coords.longitude);
+        pushDriverLocation(targetRide, pos.coords.latitude, pos.coords.longitude);
       },
-      () => {
-        // Mantiene la última posición conocida si falla una lectura
-      },
-      { enableHighAccuracy: true, maximumAge: 3000, timeout: 8000 }
+      () => {},
+      { enableHighAccuracy: true, maximumAge: 2000, timeout: 8000 }
     );
+
+    const intervalId = setInterval(() => {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          pushDriverLocation(targetRide, pos.coords.latitude, pos.coords.longitude);
+        },
+        () => {},
+        { enableHighAccuracy: true, maximumAge: 2000, timeout: 6000 }
+      );
+    }, 5000);
 
     return () => {
       navigator.geolocation.clearWatch(watchId);
+      clearInterval(intervalId);
     };
-  }, [liveGpsEnabled, activeRides.length]);
+  }, [liveDriverRides.length, liveDriverRides[0]?.id, liveDriverRides[0]?.status]);
 
   const handleRoleSwitch = (targetRole) => {
     if (targetRole === 'passenger' || isUnlocked) {
@@ -486,7 +511,15 @@ export default function App() {
     };
 
     updateLiveOrQuoteRoute();
-  }, [pickupCoords, dropoffCoords, role, trackedRide]);
+  }, [
+    pickupCoords,
+    dropoffCoords,
+    role,
+    trackedRide?.id,
+    trackedRide?.status,
+    trackedRide?.driver_lat,
+    trackedRide?.driver_lng
+  ]);
 
   const buildViewbox = () => {
     const centerLat = pickupCoords.lat || 41.3839;
@@ -774,7 +807,7 @@ export default function App() {
   const updateRideStatus = async (ride, newStatus) => {
     const payload = { status: newStatus };
 
-    if (newStatus === 'accepted' && !ride.driver_lat && !ride.driver_lng && navigator.geolocation) {
+    if ((newStatus === 'accepted' || newStatus === 'in_progress') && navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (pos) => {
           supabase
@@ -1333,18 +1366,16 @@ export default function App() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h2 className="text-lg font-bold">Panel del Conductor</h2>
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setLiveGpsEnabled((prev) => !prev)}
-                className={`px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 border transition ${
-                  liveGpsEnabled
-                    ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/50'
-                    : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-600'
+              <span
+                className={`px-2.5 py-1 rounded-lg text-xs font-semibold flex items-center gap-1.5 border ${
+                  gpsStreaming
+                    ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/40'
+                    : 'bg-slate-900 text-slate-400 border-slate-800'
                 }`}
               >
-                <Radio className={`w-3.5 h-3.5 ${liveGpsEnabled ? 'text-emerald-400 animate-pulse' : 'text-slate-400'}`} />
-                {liveGpsEnabled ? t.liveTrackingBtn : t.startLiveTrackingBtn}
-              </button>
+                <Radio className={`w-3.5 h-3.5 ${gpsStreaming ? 'text-emerald-400 animate-pulse' : 'text-slate-500'}`} />
+                {gpsStreaming ? t.autoGpsActive : t.autoGpsIdle}
+              </span>
               <button onClick={fetchRides} className="text-xs text-emerald-400 flex items-center gap-1">
                 <RefreshCw className="w-3.5 h-3.5" /> Actualizar
               </button>
