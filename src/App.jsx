@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
-  MapPin, Navigation, Car, Shield, Clock, DollarSign, CheckCircle2,
-  User, Phone, AlertCircle, RefreshCw, Compass, ExternalLink, Lock, MessageCircle
+  MapPin, Navigation, Car, Shield, AlertCircle, RefreshCw,
+  Compass, ExternalLink, MessageCircle, MessageSquare, User
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import L from 'leaflet';
@@ -14,24 +14,117 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-// CONFIGURACIÓN RÁPIDA (Pon aquí tu PIN y tu WhatsApp)
+// CONFIGURACIÓN RÁPIDA (Pon aquí tu PIN y tu número de teléfono)
 const ACCESS_PIN = '1804';
-const DRIVER_PHONE = '13234554002'; // Formato: 1 + código de área + número (sin espacios ni guiones)
+const DRIVER_PHONE = '3234554002'; // Formato: 1 + código de área + número (sin espacios ni guiones)
 
-const SERVICE_TIERS = [
-  { id: 'TRANSY X', name: 'TRANSY X', desc: 'Económico • 4 pasajeros', base: 4.5, perMile: 1.65, perMin: 0.25, eta: '3 min' },
-  { id: 'TRANSY XL', name: 'TRANSY XL', desc: 'SUV / Grupos • 6 pasajeros', base: 7.5, perMile: 2.35, perMin: 0.35, eta: '5 min' },
-  { id: 'TRANSY VIP', name: 'TRANSY VIP', desc: 'Ejecutivo / Aeropuertos', base: 14.0, perMile: 3.1, perMin: 0.45, eta: '8 min' }
-];
-
-const STATUS_LABELS = {
-  pending: { title: 'Buscando conductor disponible...', badge: 'Pendiente', color: 'text-amber-400 bg-amber-500/20' },
-  accepted: { title: '¡Conductor asignado! En camino a recogerte', badge: 'Aceptado', color: 'text-emerald-400 bg-emerald-500/20' },
-  in_progress: { title: 'Viaje en curso hacia tu destino', badge: 'En ruta', color: 'text-sky-400 bg-sky-500/20' },
-  completed: { title: 'Viaje finalizado. ¡Gracias por viajar con Transy!', badge: 'Completado', color: 'text-slate-300 bg-slate-700' }
+const TRANSLATIONS = {
+  es: {
+    subtitle: 'Traslados Privados en Connecticut',
+    passengerTab: 'Pasajero',
+    driverTab: 'Conductor',
+    adminTab: 'Admin',
+    restrictedTitle: 'Acceso Restringido',
+    restrictedDesc: 'Ingresa tu PIN de conductor para abrir el panel de',
+    pinError: 'PIN incorrecto. Intenta de nuevo.',
+    cancel: 'Cancelar',
+    enter: 'Entrar',
+    useGps: 'Usar mi GPS',
+    locating: 'Ubicando...',
+    gpsAlert: 'Activa los permisos de ubicación en tu teléfono para usar el GPS.',
+    noGpsSupport: 'Tu navegador no soporta GPS.',
+    expressHeader: 'Connecticut Express',
+    yourName: 'Tu nombre',
+    namePlaceholder: 'Ej. Carlos Mendoza',
+    pickupLabel: 'Punto de partida',
+    pickupPlaceholder: 'Escribe dirección o ciudad...',
+    dropoffLabel: 'Destino',
+    dropoffPlaceholder: '¿A dónde vas? (Ej. JFK Airport, New Haven...)',
+    requesting: 'Solicitando...',
+    confirmBtn: 'Confirmar',
+    defaultPassenger: 'Pasajero Transy',
+    originWord: 'Origen',
+    dropoffWord: 'Destino',
+    serviceWord: 'Servicio',
+    smsBtn: 'Enviar Mensaje (SMS)',
+    whatsappBtn: 'WhatsApp',
+    bookAnother: 'Pedir otro viaje',
+    cancelRide: 'Cancelar solicitud',
+    smsTemplate: (name, pickup, dropoff) =>
+      `Hola, soy ${name}. Solicité un viaje Transy desde ${pickup} hasta ${dropoff}.`,
+    tiers: [
+      { id: 'TRANSY X', name: 'TRANSY X', desc: 'Económico • 4 pasajeros', base: 4.5, perMile: 1.65, perMin: 0.25, eta: '3 min' },
+      { id: 'TRANSY XL', name: 'TRANSY XL', desc: 'SUV / Grupos • 6 pasajeros', base: 7.5, perMile: 2.35, perMin: 0.35, eta: '5 min' },
+      { id: 'TRANSY VIP', name: 'TRANSY VIP', desc: 'Ejecutivo / Aeropuertos', base: 14.0, perMile: 3.1, perMin: 0.45, eta: '8 min' }
+    ],
+    statuses: {
+      pending: { title: 'Buscando conductor disponible...', badge: 'Pendiente', color: 'text-amber-400 bg-amber-500/20' },
+      accepted: { title: '¡Conductor asignado! En camino a recogerte', badge: 'Aceptado', color: 'text-emerald-400 bg-emerald-500/20' },
+      in_progress: { title: 'Viaje en curso hacia tu destino', badge: 'En ruta', color: 'text-sky-400 bg-sky-500/20' },
+      completed: { title: 'Viaje finalizado. ¡Gracias por viajar con Transy!', badge: 'Completado', color: 'text-slate-300 bg-slate-700' }
+    }
+  },
+  en: {
+    subtitle: 'Connecticut Private Rides',
+    passengerTab: 'Passenger',
+    driverTab: 'Driver',
+    adminTab: 'Admin',
+    restrictedTitle: 'Restricted Access',
+    restrictedDesc: 'Enter your driver PIN to open the panel for',
+    pinError: 'Incorrect PIN. Please try again.',
+    cancel: 'Cancel',
+    enter: 'Enter',
+    useGps: 'Use my GPS',
+    locating: 'Locating...',
+    gpsAlert: 'Please enable location permissions on your phone to use GPS.',
+    noGpsSupport: 'Your browser does not support GPS.',
+    expressHeader: 'Connecticut Express',
+    yourName: 'Your name',
+    namePlaceholder: 'e.g. John Smith',
+    pickupLabel: 'Pickup location',
+    pickupPlaceholder: 'Enter address or city...',
+    dropoffLabel: 'Destination',
+    dropoffPlaceholder: 'Where to? (e.g. JFK Airport, New Haven...)',
+    requesting: 'Requesting...',
+    confirmBtn: 'Confirm',
+    defaultPassenger: 'Transy Passenger',
+    originWord: 'Pickup',
+    dropoffWord: 'Dropoff',
+    serviceWord: 'Service',
+    smsBtn: 'Send Text (SMS)',
+    whatsappBtn: 'WhatsApp',
+    bookAnother: 'Book another ride',
+    cancelRide: 'Cancel request',
+    smsTemplate: (name, pickup, dropoff) =>
+      `Hi, I'm ${name}. I requested a Transy ride from ${pickup} to ${dropoff}.`,
+    tiers: [
+      { id: 'TRANSY X', name: 'TRANSY X', desc: 'Economy • Up to 4 passengers', base: 4.5, perMile: 1.65, perMin: 0.25, eta: '3 min' },
+      { id: 'TRANSY XL', name: 'TRANSY XL', desc: 'SUV / Groups • Up to 6 passengers', base: 7.5, perMile: 2.35, perMin: 0.35, eta: '5 min' },
+      { id: 'TRANSY VIP', name: 'TRANSY VIP', desc: 'Executive / Airports', base: 14.0, perMile: 3.1, perMin: 0.45, eta: '8 min' }
+    ],
+    statuses: {
+      pending: { title: 'Looking for an available driver...', badge: 'Pending', color: 'text-amber-400 bg-amber-500/20' },
+      accepted: { title: 'Driver assigned! On the way to pick you up', badge: 'Accepted', color: 'text-emerald-400 bg-emerald-500/20' },
+      in_progress: { title: 'Ride in progress to your destination', badge: 'In Transit', color: 'text-sky-400 bg-sky-500/20' },
+      completed: { title: 'Ride completed. Thank you for riding with Transy!', badge: 'Completed', color: 'text-slate-300 bg-slate-700' }
+    }
+  }
 };
 
 export default function App() {
+  const [lang, setLang] = useState(() => {
+    const saved = localStorage.getItem('transy_lang');
+    if (saved === 'en' || saved === 'es') return saved;
+    return navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en';
+  });
+
+  const t = TRANSLATIONS[lang];
+
+  const changeLang = (newLang) => {
+    setLang(newLang);
+    localStorage.setItem('transy_lang', newLang);
+  };
+
   const [role, setRole] = useState('passenger'); // passenger | driver | admin
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [pinModalTarget, setPinModalTarget] = useState(null);
@@ -148,8 +241,8 @@ export default function App() {
             const coords = route.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
             const polyline = L.polyline(coords, { color: '#10b981', weight: 5 }).addTo(layerGroup.current);
 
-            L.marker([pickupCoords.lat, pickupCoords.lng]).addTo(layerGroup.current).bindPopup('Origen');
-            L.marker([dropoffCoords.lat, dropoffCoords.lng]).addTo(layerGroup.current).bindPopup('Destino');
+            L.marker([pickupCoords.lat, pickupCoords.lng]).addTo(layerGroup.current);
+            L.marker([dropoffCoords.lat, dropoffCoords.lng]).addTo(layerGroup.current);
 
             mapInstance.current.fitBounds(polyline.getBounds(), { padding: [35, 35] });
           }
@@ -192,7 +285,7 @@ export default function App() {
 
   const handleUseCurrentGPS = () => {
     if (!navigator.geolocation) {
-      alert('Tu navegador no soporta GPS.');
+      alert(t.noGpsSupport);
       return;
     }
     setGpsLoading(true);
@@ -209,12 +302,12 @@ export default function App() {
           const label = p ? [p.name, p.street, p.city || p.town, p.state].filter(Boolean).join(', ') : `GPS (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
           setPickupText(label);
         } catch {
-          setPickupText(`Mi ubicación GPS (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
+          setPickupText(`GPS (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
         }
         setGpsLoading(false);
       },
       () => {
-        alert('Activa los permisos de ubicación en tu teléfono para usar el GPS.');
+        alert(t.gpsAlert);
         setGpsLoading(false);
       },
       { enableHighAccuracy: true }
@@ -228,14 +321,14 @@ export default function App() {
 
   const handleRequestRide = async () => {
     setLoading(true);
-    const tierObj = SERVICE_TIERS.find((t) => t.id === selectedTier) || SERVICE_TIERS[0];
+    const tierObj = t.tiers.find((item) => item.id === selectedTier) || t.tiers[0];
     const fare = parseFloat(calculatePrice(tierObj));
 
     const { data, error } = await supabase
       .from('rides')
       .insert([
         {
-          passenger_name: passengerName.trim() || 'Pasajero Transy',
+          passenger_name: passengerName.trim() || t.defaultPassenger,
           pickup: pickupText,
           dropoff: dropoffText,
           pickup_lat: pickupCoords.lat,
@@ -279,9 +372,9 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-12">
-      {/* Barra superior limpia para el cliente (5 toques en la T abren el acceso privado) */}
+      {/* Barra superior limpia para el cliente + Selector de Idioma */}
       <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3">
-        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+        <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div
             onClick={() => {
               const next = logoTaps + 1;
@@ -299,32 +392,50 @@ export default function App() {
             </div>
             <div>
               <h1 className="font-bold tracking-wider text-base leading-none">TRANSY</h1>
-              <span className="text-[11px] text-emerald-400 font-medium">Connecticut Private Rides</span>
+              <span className="text-[11px] text-emerald-400 font-medium">{t.subtitle}</span>
             </div>
           </div>
 
-          {isUnlocked && (
-            <nav className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs sm:text-sm">
+          <div className="flex items-center gap-2">
+            {/* Selector de Idioma EN / ES */}
+            <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-[11px] font-bold">
               <button
-                onClick={() => setRole('passenger')}
-                className={`px-3 py-1.5 rounded-lg font-medium transition ${role === 'passenger' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
+                onClick={() => changeLang('en')}
+                className={`px-2 py-1 rounded-md transition ${lang === 'en' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}
               >
-                Pasajero
+                EN
               </button>
               <button
-                onClick={() => setRole('driver')}
-                className={`px-3 py-1.5 rounded-lg font-medium transition ${role === 'driver' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
+                onClick={() => changeLang('es')}
+                className={`px-2 py-1 rounded-md transition ${lang === 'es' ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white'}`}
               >
-                Conductor ({activeRides.length})
+                ES
               </button>
-              <button
-                onClick={() => setRole('admin')}
-                className={`px-3 py-1.5 rounded-lg font-medium transition ${role === 'admin' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
-              >
-                Admin
-              </button>
-            </nav>
-          )}
+            </div>
+
+            {isUnlocked && (
+              <nav className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+                <button
+                  onClick={() => setRole('passenger')}
+                  className={`px-2.5 py-1 rounded-lg font-medium transition ${role === 'passenger' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
+                >
+                  {t.passengerTab}
+                </button>
+                <button
+                  onClick={() => setRole('driver')}
+                  className={`px-2.5 py-1 rounded-lg font-medium transition ${role === 'driver' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
+                >
+                  {t.driverTab} ({activeRides.length})
+                </button>
+                <button
+                  onClick={() => setRole('admin')}
+                  className={`px-2.5 py-1 rounded-lg font-medium transition ${role === 'admin' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
+                >
+                  {t.adminTab}
+                </button>
+              </nav>
+            )}
+          </div>
         </div>
       </header>
 
@@ -334,10 +445,10 @@ export default function App() {
           <form onSubmit={handlePinSubmit} className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-xs space-y-4 shadow-2xl">
             <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
               <Shield className="w-5 h-5" />
-              Acceso Restringido
+              {t.restrictedTitle}
             </div>
             <p className="text-xs text-slate-400">
-              Ingresa tu PIN de conductor para abrir el panel de <strong className="text-white uppercase">{pinModalTarget}</strong>.
+              {t.restrictedDesc} <strong className="text-white uppercase">{pinModalTarget}</strong>.
             </p>
             <input
               type="password"
@@ -349,20 +460,20 @@ export default function App() {
               placeholder="••••"
               className="w-full bg-slate-950 border border-slate-700 rounded-xl px-4 py-3 text-center text-xl tracking-[0.5em] text-white focus:border-emerald-500 focus:outline-none"
             />
-            {pinError && <p className="text-xs text-red-400 text-center">PIN incorrecto. Intenta de nuevo.</p>}
+            {pinError && <p className="text-xs text-red-400 text-center">{t.pinError}</p>}
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
                 onClick={() => setPinModalTarget(null)}
                 className="py-2.5 rounded-xl bg-slate-800 text-slate-300 text-xs font-semibold"
               >
-                Cancelar
+                {t.cancel}
               </button>
               <button
                 type="submit"
                 className="py-2.5 rounded-xl bg-emerald-500 text-slate-950 text-xs font-bold"
               >
-                Entrar
+                {t.enter}
               </button>
             </div>
           </form>
@@ -373,7 +484,7 @@ export default function App() {
         <div className="max-w-xl mx-auto mt-4 px-4">
           <div className="bg-red-950/80 border border-red-500/50 text-red-200 p-3 rounded-xl text-sm flex items-center gap-2">
             <AlertCircle className="w-5 h-5 text-red-400 shrink-0" />
-            <span>Error Supabase: {dbError}</span>
+            <span>Supabase Error: {dbError}</span>
           </div>
         </div>
       )}
@@ -390,7 +501,7 @@ export default function App() {
               className="absolute bottom-3 right-3 z-20 bg-slate-900/90 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg"
             >
               <Compass className={`w-4 h-4 ${gpsLoading ? 'animate-spin' : ''}`} />
-              {gpsLoading ? 'Ubicando...' : 'Usar mi GPS'}
+              {gpsLoading ? t.locating : t.useGps}
             </button>
           </div>
 
@@ -398,81 +509,90 @@ export default function App() {
           {trackedRide ? (
             <div className="bg-slate-900 border border-emerald-500/50 rounded-2xl p-5 space-y-4 shadow-2xl">
               <div className="flex items-center justify-between">
-                <span className={`text-xs font-bold px-3 py-1 rounded-full ${STATUS_LABELS[trackedRide.status]?.color || 'bg-slate-800 text-white'}`}>
-                  {STATUS_LABELS[trackedRide.status]?.badge || trackedRide.status}
+                <span className={`text-xs font-bold px-3 py-1 rounded-full ${t.statuses[trackedRide.status]?.color || 'bg-slate-800 text-white'}`}>
+                  {t.statuses[trackedRide.status]?.badge || trackedRide.status}
                 </span>
                 <span className="text-lg font-black text-white">$ {Number(trackedRide.fare).toFixed(2)}</span>
               </div>
 
               <div>
                 <h2 className="text-base font-bold text-white">
-                  {STATUS_LABELS[trackedRide.status]?.title}
+                  {t.statuses[trackedRide.status]?.title}
                 </h2>
                 <p className="text-xs text-slate-400 mt-0.5">
-                  Servicio {trackedRide.service_type} • {trackedRide.distance_miles} mi ({trackedRide.duration_min} min)
+                  {t.serviceWord} {trackedRide.service_type} • {trackedRide.distance_miles} mi ({trackedRide.duration_min} min)
                 </p>
               </div>
 
               <div className="space-y-2 text-xs bg-slate-950 p-3.5 rounded-xl border border-slate-800">
                 <div className="flex items-start gap-2">
                   <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                  <span><strong>Origen:</strong> {trackedRide.pickup}</span>
+                  <span><strong>{t.originWord}:</strong> {trackedRide.pickup}</span>
                 </div>
                 <div className="flex items-start gap-2">
                   <Navigation className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                  <span><strong>Destino:</strong> {trackedRide.dropoff}</span>
+                  <span><strong>{t.dropoffWord}:</strong> {trackedRide.dropoff}</span>
                 </div>
               </div>
 
+              {/* Botones de Mensaje de Texto (SMS) y WhatsApp */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <a
-                  href={`https://wa.me/${DRIVER_PHONE}?text=${encodeURIComponent(`Hola, soy ${trackedRide.passenger_name}. Solicité un viaje Transy desde ${trackedRide.pickup} hasta ${trackedRide.dropoff}.`)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href={`sms:+${DRIVER_PHONE}?&body=${encodeURIComponent(t.smsTemplate(trackedRide.passenger_name, trackedRide.pickup, trackedRide.dropoff))}`}
                   className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2"
                 >
-                  <MessageCircle className="w-4 h-4" />
-                  Escribir al Conductor (WhatsApp)
+                  <MessageSquare className="w-4 h-4" />
+                  {t.smsBtn}
                 </a>
 
-                {trackedRide.status === 'completed' || trackedRide.status === 'cancelled' ? (
-                  <button
-                    onClick={handleDismissTrackedRide}
-                    className="bg-slate-800 hover:bg-slate-700 text-white font-semibold py-3 rounded-xl text-xs"
-                  >
-                    Pedir otro viaje
-                  </button>
-                ) : (
-                  <button
-                    onClick={() => {
-                      updateRideStatus(trackedRide.id, 'cancelled');
-                      handleDismissTrackedRide();
-                    }}
-                    className="bg-slate-800 hover:bg-red-950/60 text-slate-300 hover:text-red-300 font-semibold py-3 rounded-xl text-xs border border-slate-700"
-                  >
-                    Cancelar solicitud
-                  </button>
-                )}
+                <a
+                  href={`https://wa.me/${DRIVER_PHONE}?text=${encodeURIComponent(t.smsTemplate(trackedRide.passenger_name, trackedRide.pickup, trackedRide.dropoff))}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2"
+                >
+                  <MessageCircle className="w-4 h-4" />
+                  {t.whatsappBtn}
+                </a>
               </div>
+
+              {trackedRide.status === 'completed' || trackedRide.status === 'cancelled' ? (
+                <button
+                  onClick={handleDismissTrackedRide}
+                  className="w-full bg-slate-800 hover:bg-slate-700 text-white font-semibold py-2.5 rounded-xl text-xs"
+                >
+                  {t.bookAnother}
+                </button>
+              ) : (
+                <button
+                  onClick={() => {
+                    updateRideStatus(trackedRide.id, 'cancelled');
+                    handleDismissTrackedRide();
+                  }}
+                  className="w-full bg-transparent hover:bg-red-950/40 text-slate-400 hover:text-red-300 font-medium py-2 rounded-xl text-xs"
+                >
+                  {t.cancelRide}
+                </button>
+              )}
             </div>
           ) : (
-            /* Formulario normal de solicitud */
+            /* Formulario de solicitud */
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-xl">
               <div className="flex items-center justify-between">
-                <span className="text-xs font-bold tracking-widest text-emerald-400 uppercase">Connecticut Express</span>
+                <span className="text-xs font-bold tracking-widest text-emerald-400 uppercase">{t.expressHeader}</span>
                 <span className="text-xs text-slate-400">{routeStats.miles} mi • {routeStats.minutes} min</span>
               </div>
 
               {/* Nombre del Pasajero */}
               <div>
-                <label className="text-xs text-slate-400 mb-1 block">Tu nombre</label>
+                <label className="text-xs text-slate-400 mb-1 block">{t.yourName}</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 focus-within:border-emerald-500">
                   <User className="w-4 h-4 text-slate-400 mr-2 shrink-0" />
                   <input
                     type="text"
                     value={passengerName}
                     onChange={(e) => setPassengerName(e.target.value)}
-                    placeholder="Ej. Carlos Mendoza"
+                    placeholder={t.namePlaceholder}
                     className="bg-transparent w-full text-sm text-white focus:outline-none"
                   />
                 </div>
@@ -480,14 +600,14 @@ export default function App() {
 
               {/* Input Origen */}
               <div className="relative">
-                <label className="text-xs text-slate-400 mb-1 block">Punto de partida</label>
+                <label className="text-xs text-slate-400 mb-1 block">{t.pickupLabel}</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 focus-within:border-emerald-500">
                   <MapPin className="w-4 h-4 text-emerald-400 mr-2 shrink-0" />
                   <input
                     type="text"
                     value={pickupText}
                     onChange={(e) => searchAddress(e.target.value, 'pickup')}
-                    placeholder="Escribe dirección o ciudad..."
+                    placeholder={t.pickupPlaceholder}
                     className="bg-transparent w-full text-sm text-white focus:outline-none"
                   />
                 </div>
@@ -513,14 +633,14 @@ export default function App() {
 
               {/* Input Destino */}
               <div className="relative">
-                <label className="text-xs text-slate-400 mb-1 block">Destino</label>
+                <label className="text-xs text-slate-400 mb-1 block">{t.dropoffLabel}</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 focus-within:border-emerald-500">
                   <Navigation className="w-4 h-4 text-amber-400 mr-2 shrink-0" />
                   <input
                     type="text"
                     value={dropoffText}
                     onChange={(e) => searchAddress(e.target.value, 'dropoff')}
-                    placeholder="¿A dónde vas? (Ej. JFK Airport, New Haven...)"
+                    placeholder={t.dropoffPlaceholder}
                     className="bg-transparent w-full text-sm text-white focus:outline-none"
                   />
                 </div>
@@ -546,7 +666,7 @@ export default function App() {
 
               {/* Tarifas */}
               <div className="space-y-2 pt-2">
-                {SERVICE_TIERS.map((tier) => {
+                {t.tiers.map((tier) => {
                   const active = selectedTier === tier.id;
                   return (
                     <button
@@ -579,7 +699,7 @@ export default function App() {
                 disabled={loading}
                 className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3.5 rounded-xl transition shadow-lg shadow-emerald-500/20 text-sm"
               >
-                {loading ? 'Solicitando...' : `Confirmar ${selectedTier}`}
+                {loading ? t.requesting : `${t.confirmBtn} ${selectedTier}`}
               </button>
             </div>
           )}
