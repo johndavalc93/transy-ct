@@ -14,7 +14,7 @@ L.Icon.Default.mergeOptions({
   shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 });
 
-// CONFIGURACIÓN RÁPIDA (Cambia tu PIN y tu teléfono de WhatsApp aquí)
+// CONFIGURACIÓN RÁPIDA (Pon aquí tu PIN y tu WhatsApp)
 const ACCESS_PIN = '1804';
 const DRIVER_PHONE = '13234554002'; // Formato: 1 + código de área + número (sin espacios ni guiones)
 
@@ -37,6 +37,7 @@ export default function App() {
   const [pinModalTarget, setPinModalTarget] = useState(null);
   const [pinInput, setPinInput] = useState('');
   const [pinError, setPinError] = useState(false);
+  const [logoTaps, setLogoTaps] = useState(0);
 
   const [rides, setRides] = useState([]);
   const [currentRideId, setCurrentRideId] = useState(() => localStorage.getItem('transy_active_ride') || null);
@@ -278,10 +279,21 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-12">
-      {/* Barra superior */}
+      {/* Barra superior limpia para el cliente (5 toques en la T abren el acceso privado) */}
       <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3">
-        <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
+        <div className="max-w-5xl mx-auto flex items-center justify-between gap-3">
+          <div
+            onClick={() => {
+              const next = logoTaps + 1;
+              if (next >= 5) {
+                setLogoTaps(0);
+                handleRoleSwitch('driver');
+              } else {
+                setLogoTaps(next);
+              }
+            }}
+            className="flex items-center gap-2.5 cursor-pointer select-none"
+          >
             <div className="w-9 h-9 rounded-xl bg-emerald-500 flex items-center justify-center font-black text-slate-950 text-lg">
               T
             </div>
@@ -291,28 +303,28 @@ export default function App() {
             </div>
           </div>
 
-          <nav className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs sm:text-sm">
-            <button
-              onClick={() => handleRoleSwitch('passenger')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition ${role === 'passenger' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
-            >
-              Pasajero
-            </button>
-            <button
-              onClick={() => handleRoleSwitch('driver')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1 ${role === 'driver' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
-            >
-              {!isUnlocked && <Lock className="w-3 h-3 opacity-70" />}
-              Conductor ({activeRides.length})
-            </button>
-            <button
-              onClick={() => handleRoleSwitch('admin')}
-              className={`px-3 py-1.5 rounded-lg font-medium transition flex items-center gap-1 ${role === 'admin' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
-            >
-              {!isUnlocked && <Lock className="w-3 h-3 opacity-70" />}
-              Admin
-            </button>
-          </nav>
+          {isUnlocked && (
+            <nav className="flex bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs sm:text-sm">
+              <button
+                onClick={() => setRole('passenger')}
+                className={`px-3 py-1.5 rounded-lg font-medium transition ${role === 'passenger' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
+              >
+                Pasajero
+              </button>
+              <button
+                onClick={() => setRole('driver')}
+                className={`px-3 py-1.5 rounded-lg font-medium transition ${role === 'driver' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
+              >
+                Conductor ({activeRides.length})
+              </button>
+              <button
+                onClick={() => setRole('admin')}
+                className={`px-3 py-1.5 rounded-lg font-medium transition ${role === 'admin' ? 'bg-emerald-500 text-slate-950 font-semibold' : 'text-slate-400 hover:text-white'}`}
+              >
+                Admin
+              </button>
+            </nav>
+          )}
         </div>
       </header>
 
