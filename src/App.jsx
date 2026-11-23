@@ -181,7 +181,6 @@ export default function App() {
 
   const [pickupSuggestions, setPickupSuggestions] = useState([]);
   const [dropoffSuggestions, setDropoffSuggestions] = useState([]);
-  const [searchingType, setSearchingType] = useState(null);
   const searchTimerRef = useRef(null);
 
   const [routeStats, setRouteStats] = useState({ miles: 9.8, minutes: 18 });
@@ -330,7 +329,19 @@ export default function App() {
     if (!clean) return null;
 
     const withoutHouseNum = clean.replace(/^\d+\s+/, '');
-    const queries = withoutHouseNum !== clean ? [clean, `${clean}, CT`, `${withoutHouseNum}, CT`] : [clean, `${clean}, CT`];
+    const simplified = clean
+      .replace(/\b(the|ct|connecticut)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+
+    const queries = Array.from(
+      new Set([
+        clean,
+        `${clean}, CT`,
+        withoutHouseNum !== clean ? `${withoutHouseNum}, CT` : null,
+        simplified ? `${simplified}, CT` : null
+      ].filter(Boolean))
+    );
 
     for (const q of queries) {
       try {
@@ -351,6 +362,13 @@ export default function App() {
     return null;
   };
 
+  const queryNominatim = async (q) => {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&limit=6&q=${encodeURIComponent(q)}`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  };
+
   const searchAddress = (query, type) => {
     if (type === 'pickup') setPickupText(query);
     else setDropoffText(query);
@@ -359,24 +377,34 @@ export default function App() {
 
     if (query.trim().length < 3) {
       type === 'pickup' ? setPickupSuggestions([]) : setDropoffSuggestions([]);
-      setSearchingType(null);
       return;
     }
-
-    setSearchingType(type);
 
     searchTimerRef.current = setTimeout(async () => {
       try {
         const typedTrimmed = query.trim();
         const withoutNum = typedTrimmed.replace(/^\d+\s+/, '');
-        const searchTerm = withoutNum.length >= 3 ? withoutNum : typedTrimmed;
+        const simplified = typedTrimmed
+          .replace(/\b(the|ct|connecticut)\b/gi, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
 
-        const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&limit=6&q=${encodeURIComponent(searchTerm)}`;
-        const nomRes = await fetch(nomUrl, { headers: { Accept: 'application/json' } });
-        const nomData = await nomRes.json();
+        const candidates = Array.from(
+          new Set([
+            typedTrimmed,
+            withoutNum.length >= 3 ? withoutNum : null,
+            simplified.length >= 3 && !simplified.toLowerCase().includes('ct') ? `${simplified} CT` : simplified
+          ].filter(Boolean))
+        );
+
+        let nomData = [];
+        for (const candidate of candidates) {
+          nomData = await queryNominatim(candidate);
+          if (nomData.length > 0) break;
+        }
 
         let formatted = [];
-        if (Array.isArray(nomData) && nomData.length > 0) {
+        if (nomData.length > 0) {
           formatted = nomData.map((item) => {
             const addr = item.address || {};
             const streetName = item.name || addr.road || item.display_name.split(',')[0];
@@ -407,8 +435,6 @@ export default function App() {
         else setDropoffSuggestions(formatted);
       } catch (e) {
         console.error('Error buscando dirección:', e);
-      } finally {
-        setSearchingType(null);
       }
     }, 250);
   };
