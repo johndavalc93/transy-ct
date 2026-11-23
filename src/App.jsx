@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   MapPin, Navigation, Car, Shield, AlertCircle, RefreshCw,
-  Compass, ExternalLink, MessageCircle, MessageSquare, User, X, Move
+  Compass, ExternalLink, MessageCircle, MessageSquare, User, X, Move, Calendar, Clock
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import L from 'leaflet';
@@ -37,6 +37,12 @@ const TRANSLATIONS = {
     gpsAlert: 'Activa los permisos de ubicación en tu teléfono para usar el GPS.',
     noGpsSupport: 'Tu navegador no soporta GPS.',
     expressHeader: 'Connecticut Express',
+    nowOption: 'Viajar ahora',
+    scheduleOption: 'Programar fecha y hora',
+    dateLabel: 'Fecha',
+    timeLabel: 'Hora',
+    scheduledBadge: 'Programado',
+    nowBadge: 'Inmediato',
     yourName: 'Tu nombre',
     namePlaceholder: 'Ej. Carlos Mendoza',
     pickupLabel: 'Punto de partida',
@@ -50,20 +56,22 @@ const TRANSLATIONS = {
     originWord: 'Origen',
     dropoffWord: 'Destino',
     serviceWord: 'Servicio',
+    whenWord: 'Cuándo',
+    nowValue: 'Lo antes posible (Ahora)',
     smsBtn: 'Enviar Mensaje (SMS)',
     whatsappBtn: 'WhatsApp',
     bookAnother: 'Pedir otro viaje',
     cancelRide: 'Cancelar solicitud',
-    smsTemplate: (name, pickup, dropoff) =>
-      `Hola, soy ${name}. Solicité un viaje Transy desde ${pickup} hasta ${dropoff}.`,
+    smsTemplate: (name, pickup, dropoff, whenText) =>
+      `Hola, soy ${name}. Solicité un viaje Transy (${whenText}) desde ${pickup} hasta ${dropoff}.`,
     tiers: [
       { id: 'TRANSY X', name: 'TRANSY X', desc: 'Económico • 4 pasajeros', base: 4.5, perMile: 1.65, perMin: 0.25, eta: '3 min' },
       { id: 'TRANSY XL', name: 'TRANSY XL', desc: 'SUV / Grupos • 6 pasajeros', base: 7.5, perMile: 2.35, perMin: 0.35, eta: '5 min' },
       { id: 'TRANSY VIP', name: 'TRANSY VIP', desc: 'Ejecutivo / Aeropuertos', base: 14.0, perMile: 3.1, perMin: 0.45, eta: '8 min' }
     ],
     statuses: {
-      pending: { title: 'Buscando conductor disponible...', badge: 'Pendiente', color: 'text-amber-400 bg-amber-500/20' },
-      accepted: { title: '¡Conductor asignado! En camino a recogerte', badge: 'Aceptado', color: 'text-emerald-400 bg-emerald-500/20' },
+      pending: { title: 'Solicitud recibida • Buscando confirmación', badge: 'Pendiente', color: 'text-amber-400 bg-amber-500/20' },
+      accepted: { title: '¡Viaje confirmado! Conductor asignado', badge: 'Aceptado', color: 'text-emerald-400 bg-emerald-500/20' },
       in_progress: { title: 'Viaje en curso hacia tu destino', badge: 'En ruta', color: 'text-sky-400 bg-sky-500/20' },
       completed: { title: 'Viaje finalizado. ¡Gracias por viajar con Transy!', badge: 'Completado', color: 'text-slate-300 bg-slate-700' }
     }
@@ -86,6 +94,12 @@ const TRANSLATIONS = {
     gpsAlert: 'Please enable location permissions on your phone to use GPS.',
     noGpsSupport: 'Your browser does not support GPS.',
     expressHeader: 'Connecticut Express',
+    nowOption: 'Ride now',
+    scheduleOption: 'Schedule date & time',
+    dateLabel: 'Date',
+    timeLabel: 'Time',
+    scheduledBadge: 'Scheduled',
+    nowBadge: 'Immediate',
     yourName: 'Your name',
     namePlaceholder: 'e.g. John Smith',
     pickupLabel: 'Pickup location',
@@ -99,20 +113,22 @@ const TRANSLATIONS = {
     originWord: 'Pickup',
     dropoffWord: 'Dropoff',
     serviceWord: 'Service',
+    whenWord: 'When',
+    nowValue: 'As soon as possible (Now)',
     smsBtn: 'Send Text (SMS)',
     whatsappBtn: 'WhatsApp',
     bookAnother: 'Book another ride',
     cancelRide: 'Cancel request',
-    smsTemplate: (name, pickup, dropoff) =>
-      `Hi, I'm ${name}. I requested a Transy ride from ${pickup} to ${dropoff}.`,
+    smsTemplate: (name, pickup, dropoff, whenText) =>
+      `Hi, I'm ${name}. I requested a Transy ride (${whenText}) from ${pickup} to ${dropoff}.`,
     tiers: [
       { id: 'TRANSY X', name: 'TRANSY X', desc: 'Economy • Up to 4 passengers', base: 4.5, perMile: 1.65, perMin: 0.25, eta: '3 min' },
       { id: 'TRANSY XL', name: 'TRANSY XL', desc: 'SUV / Groups • Up to 6 passengers', base: 7.5, perMile: 2.35, perMin: 0.35, eta: '5 min' },
       { id: 'TRANSY VIP', name: 'TRANSY VIP', desc: 'Executive / Airports', base: 14.0, perMile: 3.1, perMin: 0.45, eta: '8 min' }
     ],
     statuses: {
-      pending: { title: 'Looking for an available driver...', badge: 'Pending', color: 'text-amber-400 bg-amber-500/20' },
-      accepted: { title: 'Driver assigned! On the way to pick you up', badge: 'Accepted', color: 'text-emerald-400 bg-emerald-500/20' },
+      pending: { title: 'Request received • Awaiting confirmation', badge: 'Pending', color: 'text-amber-400 bg-amber-500/20' },
+      accepted: { title: 'Ride confirmed! Driver assigned', badge: 'Accepted', color: 'text-emerald-400 bg-emerald-500/20' },
       in_progress: { title: 'Ride in progress to your destination', badge: 'In Transit', color: 'text-sky-400 bg-sky-500/20' },
       completed: { title: 'Ride completed. Thank you for riding with Transy!', badge: 'Completed', color: 'text-slate-300 bg-slate-700' }
     }
@@ -144,6 +160,21 @@ export default function App() {
   const [currentRideId, setCurrentRideId] = useState(() => localStorage.getItem('transy_active_ride') || null);
   const [dbError, setDbError] = useState(null);
   const [loading, setLoading] = useState(false);
+
+  // Estado de programación (Ahora vs Fecha y Hora)
+  const [isScheduled, setIsScheduled] = useState(false);
+  const [scheduledDate, setScheduledDate] = useState(() => {
+    const tomorrow = new Date(Date.now() + 86400000);
+    return tomorrow.toISOString().split('T')[0];
+  });
+  const [scheduledTime, setScheduledTime] = useState('06:00');
+  const [rideScheduleMeta, setRideScheduleMeta] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem('transy_ride_schedule') || '{}');
+    } catch {
+      return {};
+    }
+  });
 
   // Estado de ubicaciones y mapa
   const [pickupText, setPickupText] = useState('');
@@ -221,7 +252,6 @@ export default function App() {
     }
   };
 
-  // Actualiza coordenadas del pin y opcionalmente rellena dirección cercana si está vacía
   const applyPickupPinLocation = async (lat, lng, fillIfEmpty = false) => {
     setPickupCoords({ lat, lng });
     if (!fillIfEmpty && pickupText.trim()) return;
@@ -237,11 +267,10 @@ export default function App() {
         setPickupText(label);
       }
     } catch {
-      // Mantiene el texto actual del usuario sin interrumpir
+      // Mantiene el texto actual del usuario
     }
   };
 
-  // Inicializar mapa Leaflet con soporte para tocar o arrastrar el pin de recogida
   useEffect(() => {
     if (role !== 'passenger') return;
     if (!mapRef.current || mapInstance.current) return;
@@ -263,7 +292,6 @@ export default function App() {
     };
   }, [role]);
 
-  // Calcular ruta real con OSRM y dibujar pin de origen arrastrable
   useEffect(() => {
     const updateRoute = async () => {
       try {
@@ -427,13 +455,20 @@ export default function App() {
     return raw.toFixed(2);
   };
 
+  const formatScheduleText = (scheduledFlag, dateVal, timeVal) => {
+    if (!scheduledFlag || !dateVal || !timeVal) return t.nowValue;
+    return `${dateVal} • ${timeVal}`;
+  };
+
   const handleRequestRide = async () => {
-    const finalPickup = pickupText.trim() || `Pin (${pickupCoords.lat.toFixed(4)}, ${pickupCoords.lng.toFixed(4)})`;
+    const basePickup = pickupText.trim() || `Pin (${pickupCoords.lat.toFixed(4)}, ${pickupCoords.lng.toFixed(4)})`;
     const finalDropoff = dropoffText.trim() || 'New Haven, CT';
+    const whenLabel = formatScheduleText(isScheduled, scheduledDate, scheduledTime);
+    const storedPickup = isScheduled ? `${basePickup} [${whenLabel}]` : basePickup;
 
     setLoading(true);
     if (pickupText.trim()) {
-      await geocodeExactText(finalPickup, 'pickup');
+      await geocodeExactText(basePickup, 'pickup');
     }
     if (dropoffText.trim()) {
       await geocodeExactText(finalDropoff, 'dropoff');
@@ -447,7 +482,7 @@ export default function App() {
       .insert([
         {
           passenger_name: passengerName.trim() || t.defaultPassenger,
-          pickup: finalPickup,
+          pickup: storedPickup,
           dropoff: finalDropoff,
           pickup_lat: pickupCoords.lat,
           pickup_lng: pickupCoords.lng,
@@ -468,6 +503,9 @@ export default function App() {
     if (error) {
       setDbError(error.message);
     } else if (data) {
+      const updatedMeta = { ...rideScheduleMeta, [data.id]: whenLabel };
+      setRideScheduleMeta(updatedMeta);
+      localStorage.setItem('transy_ride_schedule', JSON.stringify(updatedMeta));
       setCurrentRideId(data.id);
       localStorage.setItem('transy_active_ride', data.id);
       fetchRides();
@@ -659,6 +697,10 @@ export default function App() {
 
               <div className="space-y-2 text-xs bg-slate-950 p-3.5 rounded-xl border border-slate-800">
                 <div className="flex items-start gap-2">
+                  <Clock className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <span><strong>{t.whenWord}:</strong> {rideScheduleMeta[trackedRide.id] || t.nowValue}</span>
+                </div>
+                <div className="flex items-start gap-2">
                   <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
                   <span><strong>{t.originWord}:</strong> {trackedRide.pickup}</span>
                 </div>
@@ -670,7 +712,14 @@ export default function App() {
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <a
-                  href={`sms:+${DRIVER_PHONE}?&body=${encodeURIComponent(t.smsTemplate(trackedRide.passenger_name, trackedRide.pickup, trackedRide.dropoff))}`}
+                  href={`sms:+${DRIVER_PHONE}?&body=${encodeURIComponent(
+                    t.smsTemplate(
+                      trackedRide.passenger_name,
+                      trackedRide.pickup,
+                      trackedRide.dropoff,
+                      rideScheduleMeta[trackedRide.id] || t.nowValue
+                    )
+                  )}`}
                   className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2"
                 >
                   <MessageSquare className="w-4 h-4" />
@@ -678,7 +727,14 @@ export default function App() {
                 </a>
 
                 <a
-                  href={`https://wa.me/${DRIVER_PHONE}?text=${encodeURIComponent(t.smsTemplate(trackedRide.passenger_name, trackedRide.pickup, trackedRide.dropoff))}`}
+                  href={`https://wa.me/${DRIVER_PHONE}?text=${encodeURIComponent(
+                    t.smsTemplate(
+                      trackedRide.passenger_name,
+                      trackedRide.pickup,
+                      trackedRide.dropoff,
+                      rideScheduleMeta[trackedRide.id] || t.nowValue
+                    )
+                  )}`}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2"
@@ -713,6 +769,53 @@ export default function App() {
                 <span className="text-xs font-bold tracking-widest text-emerald-400 uppercase">{t.expressHeader}</span>
                 <span className="text-xs text-slate-400">{routeStats.miles} mi • {routeStats.minutes} min</span>
               </div>
+
+              {/* Selector: Viajar ahora vs Programar fecha y hora */}
+              <div className="grid grid-cols-2 gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => setIsScheduled(false)}
+                  className={`py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
+                    !isScheduled ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Clock className="w-3.5 h-3.5" />
+                  {t.nowOption}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setIsScheduled(true)}
+                  className={`py-2 rounded-lg text-xs font-semibold transition flex items-center justify-center gap-1.5 ${
+                    isScheduled ? 'bg-emerald-500 text-slate-950 font-bold' : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  <Calendar className="w-3.5 h-3.5" />
+                  {t.scheduleOption}
+                </button>
+              </div>
+
+              {isScheduled && (
+                <div className="grid grid-cols-2 gap-2.5 bg-slate-950/70 border border-emerald-500/30 p-3 rounded-xl">
+                  <div>
+                    <label className="text-[11px] text-slate-400 mb-1 block">{t.dateLabel}</label>
+                    <input
+                      type="date"
+                      value={scheduledDate}
+                      onChange={(e) => setScheduledDate(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[11px] text-slate-400 mb-1 block">{t.timeLabel}</label>
+                    <input
+                      type="time"
+                      value={scheduledTime}
+                      onChange={(e) => setScheduledTime(e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">{t.yourName}</label>
@@ -868,7 +971,7 @@ export default function App() {
                       </div>
                       <div className="text-right">
                         <div className="font-bold text-base text-white">$ {calculatePrice(tier)}</div>
-                        <div className="text-[11px] text-emerald-400">{tier.eta}</div>
+                        <div className="text-[11px] text-emerald-400">{isScheduled ? t.scheduledBadge : tier.eta}</div>
                       </div>
                     </button>
                   );
