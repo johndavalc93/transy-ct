@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   MapPin, Navigation, Car, Shield, AlertCircle, RefreshCw,
-  Compass, ExternalLink, MessageCircle, MessageSquare, User, X, Move, Calendar, Clock, Check, Radio
+  Compass, ExternalLink, MessageCircle, MessageSquare, User, X, Move, Calendar, Clock, Check, Radio, Download, Share
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import L from 'leaflet';
@@ -26,6 +26,11 @@ const DRIVER_PROFILE = {
 const TRANSLATIONS = {
   es: {
     subtitle: 'Traslados Privados en Connecticut',
+    installApp: 'Instalar App',
+    iosInstallTitle: 'Instalar Transy en iPhone',
+    iosInstallStep1: '1. Toca el botón Compartir en la barra inferior de Safari.',
+    iosInstallStep2: '2. Desliza y selecciona "Agregar a inicio".',
+    understood: 'Entendido',
     passengerTab: 'Pasajero',
     driverTab: 'Conductor',
     adminTab: 'Admin',
@@ -90,6 +95,11 @@ const TRANSLATIONS = {
   },
   en: {
     subtitle: 'Connecticut Private Rides',
+    installApp: 'Install App',
+    iosInstallTitle: 'Install Transy on iPhone',
+    iosInstallStep1: '1. Tap the Share button at the bottom of Safari.',
+    iosInstallStep2: '2. Scroll down and tap "Add to Home Screen".',
+    understood: 'Got it',
     passengerTab: 'Passenger',
     driverTab: 'Driver',
     adminTab: 'Admin',
@@ -177,6 +187,52 @@ export default function App() {
   const changeLang = (newLang) => {
     setLang(newLang);
     localStorage.setItem('transy_lang', newLang);
+  };
+
+  // Estados de instalación PWA directa
+  const [deferredPrompt, setDeferredPrompt] = useState(null);
+  const [isStandalone, setIsStandalone] = useState(false);
+  const [showIosGuide, setShowIosGuide] = useState(false);
+
+  const isIosDevice = /iphone|ipad|ipod/i.test(navigator.userAgent || '');
+
+  useEffect(() => {
+    const standaloneCheck =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true;
+    setIsStandalone(standaloneCheck);
+
+    const handleBeforeInstall = (e) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+
+    const handleAppInstalled = () => {
+      setDeferredPrompt(null);
+      setIsStandalone(true);
+    };
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstall);
+    window.addEventListener('appinstalled', handleAppInstalled);
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstall);
+      window.removeEventListener('appinstalled', handleAppInstalled);
+    };
+  }, []);
+
+  const handleInstallClick = async () => {
+    if (deferredPrompt) {
+      deferredPrompt.prompt();
+      const { outcome } = await deferredPrompt.userChoice;
+      if (outcome === 'accepted') {
+        setDeferredPrompt(null);
+      }
+      return;
+    }
+    if (isIosDevice) {
+      setShowIosGuide(true);
+    }
   };
 
   const [role, setRole] = useState('passenger');
@@ -280,7 +336,6 @@ export default function App() {
       .eq('id', ride.id);
   };
 
-  // Rastreo GPS automático para viajes aceptados o en curso sin requerir botón manual
   useEffect(() => {
     if (liveDriverRides.length === 0) {
       setGpsStreaming(false);
@@ -850,6 +905,8 @@ export default function App() {
     .map((part) => part[0].toUpperCase())
     .join('');
 
+  const showInstallButton = !isStandalone && (Boolean(deferredPrompt) || isIosDevice);
+
   return (
     <div className="min-h-screen w-full overflow-x-hidden bg-slate-950 text-slate-100 font-sans pb-12">
       <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3">
@@ -876,6 +933,17 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
+            {showInstallButton && (
+              <button
+                type="button"
+                onClick={handleInstallClick}
+                className="px-2.5 py-1.5 rounded-lg bg-emerald-500/20 hover:bg-emerald-500/30 border border-emerald-500/40 text-emerald-300 text-xs font-bold flex items-center gap-1.5 transition"
+              >
+                <Download className="w-3.5 h-3.5" />
+                {t.installApp}
+              </button>
+            )}
+
             <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-[11px] font-bold">
               <button
                 onClick={() => changeLang('en')}
@@ -916,6 +984,35 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {showIosGuide && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-end sm:items-center justify-center p-4">
+          <div className="bg-slate-900 border border-emerald-500/40 rounded-2xl p-5 w-full max-w-sm space-y-3 shadow-2xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-emerald-400 font-bold text-sm">
+                <Share className="w-4 h-4" />
+                {t.iosInstallTitle}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowIosGuide(false)}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs text-slate-200">{t.iosInstallStep1}</p>
+            <p className="text-xs text-slate-200">{t.iosInstallStep2}</p>
+            <button
+              type="button"
+              onClick={() => setShowIosGuide(false)}
+              className="w-full py-2.5 rounded-xl bg-emerald-500 text-slate-950 text-xs font-bold"
+            >
+              {t.understood}
+            </button>
+          </div>
+        </div>
+      )}
 
       {pinModalTarget && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1387,116 +1484,3 @@ export default function App() {
               No hay solicitudes activas en este momento.
             </div>
           ) : (
-            activeRides.map((ride) => {
-              const driverNet = (Number(ride.fare) * 0.85).toFixed(2);
-              const mapsDestination = ride.dropoff_lat && ride.dropoff_lng
-                ? `${ride.dropoff_lat},${ride.dropoff_lng}`
-                : encodeURIComponent(ride.dropoff);
-
-              return (
-                <div key={ride.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-lg">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 uppercase">
-                        {ride.service_type} • {ride.status}
-                      </span>
-                      <div className="text-sm font-bold text-white mt-1.5">{ride.passenger_name}</div>
-                      <div className="text-xs text-slate-400">{ride.distance_miles} mi • {ride.duration_min} min</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-lg font-black text-emerald-400">$ {driverNet}</div>
-                      <div className="text-[11px] text-slate-400">Tu ganancia (85%)</div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5 text-xs bg-slate-950 p-3 rounded-xl border border-slate-800">
-                    <div className="flex items-start gap-2">
-                      <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                      <span><strong>Recoger:</strong> {ride.pickup}</span>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <Navigation className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                      <span><strong>Destino:</strong> {ride.dropoff}</span>
-                    </div>
-                  </div>
-
-                  <a
-                    href={`https://www.google.com/maps/dir/?api=1&destination=${mapsDestination}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 border border-slate-700"
-                  >
-                    <ExternalLink className="w-4 h-4 text-emerald-400" />
-                    Navegar con GPS (Google / Apple Maps)
-                  </a>
-
-                  <div className="grid grid-cols-2 gap-2 pt-1">
-                    {ride.status === 'pending' && (
-                      <button
-                        onClick={() => updateRideStatus(ride, 'accepted')}
-                        className="col-span-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
-                      >
-                        Aceptar Viaje
-                      </button>
-                    )}
-                    {ride.status === 'accepted' && (
-                      <button
-                        onClick={() => updateRideStatus(ride, 'in_progress')}
-                        className="col-span-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
-                      >
-                        Pasajero a bordo (Iniciar viaje)
-                      </button>
-                    )}
-                    {ride.status === 'in_progress' && (
-                      <button
-                        onClick={() => updateRideStatus(ride, 'completed')}
-                        className="col-span-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
-                      >
-                        Finalizar viaje
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </main>
-      )}
-
-      {role === 'admin' && (
-        <main className="max-w-3xl mx-auto px-4 pt-6 space-y-4">
-          <h2 className="text-lg font-bold">Administración Transy</h2>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-              <div className="text-xs text-slate-400">Viajes Completados</div>
-              <div className="text-xl font-black mt-1">{completedRides.length}</div>
-            </div>
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-              <div className="text-xs text-slate-400">Facturación Bruta</div>
-              <div className="text-xl font-black text-emerald-400 mt-1">$ {totalRevenue.toFixed(2)}</div>
-            </div>
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-              <div className="text-xs text-slate-400">Comisión App (15%)</div>
-              <div className="text-xl font-black text-amber-400 mt-1">$ {(totalRevenue * 0.15).toFixed(2)}</div>
-            </div>
-          </div>
-
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-            <div className="p-3 border-b border-slate-800 text-xs font-bold text-slate-400 uppercase">Historial en Supabase</div>
-            <div className="divide-y divide-slate-800">
-              {rides.map((r) => (
-                <div key={r.id} className="p-3 flex justify-between items-center text-xs">
-                  <div>
-                    <div className="font-semibold text-white">{r.passenger_name}: {r.pickup} → {r.dropoff}</div>
-                    <div className="text-slate-400">{r.service_type} • Estado: {r.status}</div>
-                  </div>
-                  <div className="font-bold text-emerald-400">$ {Number(r.fare).toFixed(2)}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </main>
-      )}
-    </div>
-  );
-}
