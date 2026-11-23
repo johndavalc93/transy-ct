@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   MapPin, Navigation, Car, Shield, AlertCircle, RefreshCw,
-  Compass, ExternalLink, MessageCircle, MessageSquare, User
+  Compass, ExternalLink, MessageCircle, MessageSquare, User, X
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import L from 'leaflet';
@@ -37,10 +37,10 @@ const TRANSLATIONS = {
     yourName: 'Tu nombre',
     namePlaceholder: 'Ej. Carlos Mendoza',
     pickupLabel: 'Punto de partida',
-    pickupPlaceholder: 'Escribe dirección o ciudad...',
+    pickupPlaceholder: 'Escribe tu dirección exacta...',
     dropoffLabel: 'Destino',
-    dropoffPlaceholder: '¿A dónde vas? (Ej. JFK Airport, New Haven...)',
-    searchingAddr: 'Buscando direcciones...',
+    dropoffPlaceholder: 'Escribe dirección exacta o aeropuerto...',
+    searchingAddr: 'Buscando sugerencias...',
     requesting: 'Solicitando...',
     confirmBtn: 'Confirmar',
     defaultPassenger: 'Pasajero Transy',
@@ -83,10 +83,10 @@ const TRANSLATIONS = {
     yourName: 'Your name',
     namePlaceholder: 'e.g. John Smith',
     pickupLabel: 'Pickup location',
-    pickupPlaceholder: 'Enter address or city...',
+    pickupPlaceholder: 'Type your exact address...',
     dropoffLabel: 'Destination',
-    dropoffPlaceholder: 'Where to? (e.g. JFK Airport, New Haven...)',
-    searchingAddr: 'Searching addresses...',
+    dropoffPlaceholder: 'Type exact address or airport...',
+    searchingAddr: 'Searching suggestions...',
     requesting: 'Requesting...',
     confirmBtn: 'Confirm',
     defaultPassenger: 'Transy Passenger',
@@ -140,14 +140,14 @@ export default function App() {
   const [loading, setLoading] = useState(false);
 
   // Estado de ubicaciones y mapa
-  const [pickupText, setPickupText] = useState('Hamden Center, Hamden, CT');
-  const [dropoffText, setDropoffText] = useState('Tweed New Haven Airport (HVN), New Haven, CT');
+  const [pickupText, setPickupText] = useState('');
+  const [dropoffText, setDropoffText] = useState('');
   const [pickupCoords, setPickupCoords] = useState({ lat: 41.3839, lng: -72.9026 });
   const [dropoffCoords, setDropoffCoords] = useState({ lat: 41.2638, lng: -72.8868 });
 
   const [pickupSuggestions, setPickupSuggestions] = useState([]);
   const [dropoffSuggestions, setDropoffSuggestions] = useState([]);
-  const [searchingType, setSearchingType] = useState(null); // 'pickup' | 'dropoff' | null
+  const [searchingType, setSearchingType] = useState(null);
   const searchTimerRef = useRef(null);
 
   const [routeStats, setRouteStats] = useState({ miles: 9.8, minutes: 18 });
@@ -187,7 +187,6 @@ export default function App() {
     };
   }, []);
 
-  // Control de acceso con PIN para Conductor y Admin
   const handleRoleSwitch = (targetRole) => {
     if (targetRole === 'passenger' || isUnlocked) {
       setRole(targetRole);
@@ -210,7 +209,6 @@ export default function App() {
     }
   };
 
-  // Inicializar mapa Leaflet limpio
   useEffect(() => {
     if (role !== 'passenger') return;
     if (!mapRef.current || mapInstance.current) return;
@@ -227,7 +225,6 @@ export default function App() {
     };
   }, [role]);
 
-  // Calcular ruta real con OSRM
   useEffect(() => {
     const updateRoute = async () => {
       try {
@@ -260,7 +257,34 @@ export default function App() {
     updateRoute();
   }, [pickupCoords, dropoffCoords, role]);
 
-  // Buscador de direcciones estilo Uber/Lyft (Nominatim US + fallback Photon)
+  // Busca coordenadas de una dirección libre sin cambiar el texto que escribió el usuario
+  const geocodeExactText = async (rawText, type) => {
+    const clean = rawText.trim();
+    if (!clean) return null;
+
+    // Si tiene número de casa (ej. "12134 town walk drive"), intentamos primero sin el número por si el mapa solo tiene la calle
+    const withoutHouseNum = clean.replace(/^\d+\s+/, '');
+    const queries = withoutHouseNum !== clean ? [clean, `${clean}, CT`, `${withoutHouseNum}, CT`] : [clean, `${clean}, CT`];
+
+    for (const q of queries) {
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&countrycodes=us&limit=1&q=${encodeURIComponent(q)}`, {
+          headers: { Accept: 'application/json' }
+        });
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+          if (type === 'pickup') setPickupCoords(coords);
+          else setDropoffCoords(coords);
+          return coords;
+        }
+      } catch {
+        // continúa al siguiente intento
+      }
+    }
+    return null;
+  };
+
   const searchAddress = (query, type) => {
     if (type === 'pickup') setPickupText(query);
     else setDropoffText(query);
@@ -277,48 +301,39 @@ export default function App() {
 
     searchTimerRef.current = setTimeout(async () => {
       try {
-        let formatted = [];
-        const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&limit=6&q=${encodeURIComponent(query)}`;
+        const typedTrimmed = query.trim();
+        const withoutNum = typedTrimmed.replace(/^\d+\s+/, '');
+        const searchTerm = withoutNum.length >= 3 ? withoutNum : typedTrimmed;
+
+        const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&limit=6&q=${encodeURIComponent(searchTerm)}`;
         const nomRes = await fetch(nomUrl, { headers: { Accept: 'application/json' } });
         const nomData = await nomRes.json();
 
+        let formatted = [];
         if (Array.isArray(nomData) && nomData.length > 0) {
           formatted = nomData.map((item) => {
             const addr = item.address || {};
-            const mainName =
-              item.name ||
-              [addr.house_number, addr.road].filter(Boolean).join(' ') ||
-              item.display_name.split(',')[0];
+            const streetName = item.name || addr.road || item.display_name.split(',')[0];
             const area = [
               addr.city || addr.town || addr.village || addr.hamlet || addr.county,
               addr.state_code || addr.state
             ]
               .filter(Boolean)
               .join(', ');
-            const fullLabel = area && !mainName.includes(area) ? `${mainName}, ${area}` : item.display_name;
+
+            // Si el usuario escribió un número al inicio (ej. 12134), lo conservamos si la sugerencia no empieza con número
+            const hasUserNumber = /^\d+/.test(typedTrimmed);
+            const userPrefix = hasUserNumber ? typedTrimmed.split(/\s+/)[0] : '';
+            const startsWithNum = /^\d+/.test(streetName);
+            const finalStreet = hasUserNumber && !startsWithNum ? `${userPrefix} ${streetName}` : streetName;
+            const fullLabel = area && !finalStreet.toLowerCase().includes(area.toLowerCase()) ? `${finalStreet}, ${area}` : finalStreet;
 
             return {
-              title: mainName,
+              title: finalStreet,
               subtitle: area || item.display_name,
               label: fullLabel,
               lat: parseFloat(item.lat),
               lng: parseFloat(item.lon)
-            };
-          });
-        } else {
-          const phRes = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&lat=41.38&lon=-72.90&limit=6`);
-          const phData = await phRes.json();
-          formatted = (phData.features || []).map((f) => {
-            const p = f.properties;
-            const title = p.name || [p.housenumber, p.street].filter(Boolean).join(' ') || query;
-            const subtitle = [p.city || p.town, p.state, p.country].filter(Boolean).join(', ');
-            const label = subtitle ? `${title}, ${subtitle}` : title;
-            return {
-              title,
-              subtitle,
-              label,
-              lat: f.geometry.coordinates[1],
-              lng: f.geometry.coordinates[0]
             };
           });
         }
@@ -372,7 +387,15 @@ export default function App() {
   };
 
   const handleRequestRide = async () => {
+    const finalPickup = pickupText.trim() || 'Hamden, CT';
+    const finalDropoff = dropoffText.trim() || 'New Haven, CT';
+
     setLoading(true);
+    await Promise.all([
+      geocodeExactText(finalPickup, 'pickup'),
+      geocodeExactText(finalDropoff, 'dropoff')
+    ]);
+
     const tierObj = t.tiers.find((item) => item.id === selectedTier) || t.tiers[0];
     const fare = parseFloat(calculatePrice(tierObj));
 
@@ -381,8 +404,8 @@ export default function App() {
       .insert([
         {
           passenger_name: passengerName.trim() || t.defaultPassenger,
-          pickup: pickupText,
-          dropoff: dropoffText,
+          pickup: finalPickup,
+          dropoff: finalDropoff,
           pickup_lat: pickupCoords.lat,
           pickup_lng: pickupCoords.lng,
           dropoff_lat: dropoffCoords.lat,
@@ -424,7 +447,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-12">
-      {/* Barra superior limpia para el cliente + Selector de Idioma */}
       <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3">
         <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div
@@ -490,7 +512,6 @@ export default function App() {
         </div>
       </header>
 
-      {/* Modal de PIN para Conductor / Admin */}
       {pinModalTarget && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
           <form onSubmit={handlePinSubmit} className="bg-slate-900 border border-slate-700 rounded-2xl p-6 w-full max-w-xs space-y-4 shadow-2xl">
@@ -540,10 +561,8 @@ export default function App() {
         </div>
       )}
 
-      {/* VISTA PASAJERO */}
       {role === 'passenger' && (
         <main className="max-w-xl mx-auto px-4 pt-4 space-y-4">
-          {/* Mapa Interactivo */}
           <div className="relative rounded-2xl overflow-hidden border border-slate-800 shadow-xl h-56 sm:h-64 bg-slate-900">
             <div ref={mapRef} className="w-full h-full z-10" />
             <button
@@ -556,7 +575,6 @@ export default function App() {
             </button>
           </div>
 
-          {/* Tarjeta de Seguimiento en Vivo */}
           {trackedRide ? (
             <div className="bg-slate-900 border border-emerald-500/50 rounded-2xl p-5 space-y-4 shadow-2xl">
               <div className="flex items-center justify-between">
@@ -626,14 +644,12 @@ export default function App() {
               )}
             </div>
           ) : (
-            /* Formulario de solicitud */
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-xl">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-bold tracking-widest text-emerald-400 uppercase">{t.expressHeader}</span>
                 <span className="text-xs text-slate-400">{routeStats.miles} mi • {routeStats.minutes} min</span>
               </div>
 
-              {/* Nombre del Pasajero */}
               <div>
                 <label className="text-xs text-slate-400 mb-1 block">{t.yourName}</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl px-3 py-2 focus-within:border-emerald-500">
@@ -648,7 +664,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Input Origen con Autocompletado */}
+              {/* Input Origen con opción de dirección exacta + sugerencias */}
               <div className="relative">
                 <label className="text-xs text-slate-400 mb-1 block">{t.pickupLabel}</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 focus-within:border-emerald-500">
@@ -657,9 +673,27 @@ export default function App() {
                     type="text"
                     value={pickupText}
                     onChange={(e) => searchAddress(e.target.value, 'pickup')}
+                    onBlur={() => {
+                      setTimeout(() => {
+                        setPickupSuggestions([]);
+                        geocodeExactText(pickupText, 'pickup');
+                      }, 180);
+                    }}
                     placeholder={t.pickupPlaceholder}
                     className="bg-transparent w-full text-sm text-white focus:outline-none"
                   />
+                  {pickupText && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPickupText('');
+                        setPickupSuggestions([]);
+                      }}
+                      className="text-slate-400 hover:text-white ml-1"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
                 {(searchingType === 'pickup' || pickupSuggestions.length > 0) && (
                   <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-60 overflow-y-auto">
@@ -690,7 +724,7 @@ export default function App() {
                 )}
               </div>
 
-              {/* Input Destino con Autocompletado */}
+              {/* Input Destino con opción de dirección exacta + sugerencias */}
               <div className="relative">
                 <label className="text-xs text-slate-400 mb-1 block">{t.dropoffLabel}</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 focus-within:border-emerald-500">
@@ -699,9 +733,27 @@ export default function App() {
                     type="text"
                     value={dropoffText}
                     onChange={(e) => searchAddress(e.target.value, 'dropoff')}
+                    onBlur={() => {
+                      setTimeout(() => {
+                        setDropoffSuggestions([]);
+                        geocodeExactText(dropoffText, 'dropoff');
+                      }, 180);
+                    }}
                     placeholder={t.dropoffPlaceholder}
                     className="bg-transparent w-full text-sm text-white focus:outline-none"
                   />
+                  {dropoffText && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setDropoffText('');
+                        setDropoffSuggestions([]);
+                      }}
+                      className="text-slate-400 hover:text-white ml-1"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
                 </div>
                 {(searchingType === 'dropoff' || dropoffSuggestions.length > 0) && (
                   <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-60 overflow-y-auto">
@@ -774,7 +826,6 @@ export default function App() {
         </main>
       )}
 
-      {/* VISTA CONDUCTOR */}
       {role === 'driver' && (
         <main className="max-w-xl mx-auto px-4 pt-6 space-y-4">
           <div className="flex items-center justify-between">
@@ -865,7 +916,6 @@ export default function App() {
         </main>
       )}
 
-      {/* VISTA ADMINISTRACIÓN */}
       {role === 'admin' && (
         <main className="max-w-3xl mx-auto px-4 pt-6 space-y-4">
           <h2 className="text-lg font-bold">Administración Transy</h2>
