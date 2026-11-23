@@ -15,10 +15,10 @@ L.Icon.Default.mergeOptions({
 });
 
 // CONFIGURACIÓN RÁPIDA (Pon aquí tu PIN, teléfono y datos del conductor)
-const ACCESS_PIN = '1804';
-const DRIVER_PHONE = '13234554002'; // Formato: 1 + código de área + número (sin espacios ni guiones)
+const ACCESS_PIN = '2026';
+const DRIVER_PHONE = '12035550199'; // Formato: 1 + código de área + número (sin espacios ni guiones)
 const DRIVER_PROFILE = {
-  name: 'John Valencia',
+  name: 'Jhon Valencia',
   vehicle: 'White 2016 Mazda 3',
   photoUrl: ''
 };
@@ -1484,3 +1484,116 @@ export default function App() {
               No hay solicitudes activas en este momento.
             </div>
           ) : (
+            activeRides.map((ride) => {
+              const driverNet = (Number(ride.fare) * 0.85).toFixed(2);
+              const mapsDestination = ride.dropoff_lat && ride.dropoff_lng
+                ? `${ride.dropoff_lat},${ride.dropoff_lng}`
+                : encodeURIComponent(ride.dropoff);
+
+              return (
+                <div key={ride.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-lg">
+                  <div className="flex justify-between items-start">
+                    <div>
+                      <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 uppercase">
+                        {ride.service_type} • {ride.status}
+                      </span>
+                      <div className="text-sm font-bold text-white mt-1.5">{ride.passenger_name}</div>
+                      <div className="text-xs text-slate-400">{ride.distance_miles} mi • {ride.duration_min} min</div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-lg font-black text-emerald-400">$ {driverNet}</div>
+                      <div className="text-[11px] text-slate-400">Tu ganancia (85%)</div>
+                    </div>
+                  </div>
+
+                  <div className="space-y-1.5 text-xs bg-slate-950 p-3 rounded-xl border border-slate-800">
+                    <div className="flex items-start gap-2">
+                      <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                      <span><strong>Recoger:</strong> {ride.pickup}</span>
+                    </div>
+                    <div className="flex items-start gap-2">
+                      <Navigation className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                      <span><strong>Destino:</strong> {ride.dropoff}</span>
+                    </div>
+                  </div>
+
+                  <a
+                    href={`https://www.google.com/maps/dir/?api=1&destination=${mapsDestination}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 border border-slate-700"
+                  >
+                    <ExternalLink className="w-4 h-4 text-emerald-400" />
+                    Navegar con GPS (Google / Apple Maps)
+                  </a>
+
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    {ride.status === 'pending' && (
+                      <button
+                        onClick={() => updateRideStatus(ride, 'accepted')}
+                        className="col-span-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
+                      >
+                        Aceptar Viaje
+                      </button>
+                    )}
+                    {ride.status === 'accepted' && (
+                      <button
+                        onClick={() => updateRideStatus(ride, 'in_progress')}
+                        className="col-span-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
+                      >
+                        Pasajero a bordo (Iniciar viaje)
+                      </button>
+                    )}
+                    {ride.status === 'in_progress' && (
+                      <button
+                        onClick={() => updateRideStatus(ride, 'completed')}
+                        className="col-span-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
+                      >
+                        Finalizar viaje
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })
+          )}
+        </main>
+      )}
+
+      {role === 'admin' && (
+        <main className="max-w-3xl mx-auto px-4 pt-6 space-y-4">
+          <h2 className="text-lg font-bold">Administración Transy</h2>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+              <div className="text-xs text-slate-400">Viajes Completados</div>
+              <div className="text-xl font-black mt-1">{completedRides.length}</div>
+            </div>
+            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+              <div className="text-xs text-slate-400">Facturación Bruta</div>
+              <div className="text-xl font-black text-emerald-400 mt-1">$ {totalRevenue.toFixed(2)}</div>
+            </div>
+            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
+              <div className="text-xs text-slate-400">Comisión App (15%)</div>
+              <div className="text-xl font-black text-amber-400 mt-1">$ {(totalRevenue * 0.15).toFixed(2)}</div>
+            </div>
+          </div>
+
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
+            <div className="p-3 border-b border-slate-800 text-xs font-bold text-slate-400 uppercase">Historial en Supabase</div>
+            <div className="divide-y divide-slate-800">
+              {rides.map((r) => (
+                <div key={r.id} className="p-3 flex justify-between items-center text-xs">
+                  <div>
+                    <div className="font-semibold text-white">{r.passenger_name}: {r.pickup} → {r.dropoff}</div>
+                    <div className="text-slate-400">{r.service_type} • Estado: {r.status}</div>
+                  </div>
+                  <div className="font-bold text-emerald-400">$ {Number(r.fare).toFixed(2)}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </main>
+      )}
+    </div>
+  );
+}
