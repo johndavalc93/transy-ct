@@ -15,10 +15,10 @@ L.Icon.Default.mergeOptions({
 });
 
 // CONFIGURACIÓN RÁPIDA (Pon aquí tu PIN, teléfono y datos del conductor)
-const ACCESS_PIN = '2026';
-const DRIVER_PHONE = '12035550199'; // Formato: 1 + código de área + número (sin espacios ni guiones)
+const ACCESS_PIN = '1804';
+const DRIVER_PHONE = '13234554002'; // Formato: 1 + código de área + número (sin espacios ni guiones)
 const DRIVER_PROFILE = {
-  name: 'Jhon Valencia',
+  name: 'John Valencia',
   vehicle: 'White 2016 Mazda 3',
   photoUrl: ''
 };
