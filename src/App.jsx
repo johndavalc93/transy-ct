@@ -79,7 +79,7 @@ export default function App() {
     if (role !== 'passenger') return;
     if (!mapRef.current || mapInstance.current) return;
 
-    const map = L.map(mapRef.current, { zoomControl: false }).setView([pickupCoords.lat, pickupCoords.lng], 12);
+    const map = L.map(mapRef.current, { zoomControl: false, attributionControl: false }).setView([pickupCoords.lat, pickupCoords.lng], 12);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap'
 }).addTo(map);
