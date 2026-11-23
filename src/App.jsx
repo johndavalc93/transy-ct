@@ -133,6 +133,17 @@ const TRANSLATIONS = {
   }
 };
 
+function distanceApprox(lat1, lng1, lat2, lng2) {
+  const toRad = (v) => (v * Math.PI) / 180;
+  const R = 3958.8;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
 export default function App() {
   const [lang, setLang] = useState(() => {
     const saved = localStorage.getItem('transy_lang');
@@ -324,6 +335,24 @@ export default function App() {
     updateRoute();
   }, [pickupCoords, dropoffCoords, role]);
 
+  const buildViewbox = () => {
+    const centerLat = pickupCoords.lat || 41.3839;
+    const centerLng = pickupCoords.lng || -72.9026;
+    const left = (centerLng - 0.85).toFixed(4);
+    const top = (centerLat + 0.65).toFixed(4);
+    const right = (centerLng + 0.85).toFixed(4);
+    const bottom = (centerLat - 0.65).toFixed(4);
+    return `${left},${top},${right},${bottom}`;
+  };
+
+  const queryNominatim = async (q, useBias = true) => {
+    const viewboxParam = useBias ? `&viewbox=${buildViewbox()}&bounded=0` : '';
+    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&limit=10${viewboxParam}&q=${encodeURIComponent(q)}`;
+    const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  };
+
   const geocodeExactText = async (rawText, type) => {
     const clean = rawText.trim();
     if (!clean) return null;
@@ -345,12 +374,14 @@ export default function App() {
 
     for (const q of queries) {
       try {
-        const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&countrycodes=us&limit=1&q=${encodeURIComponent(q)}`, {
-          headers: { Accept: 'application/json' }
-        });
-        const data = await res.json();
-        if (Array.isArray(data) && data.length > 0) {
-          const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+        const data = await queryNominatim(q, true);
+        if (data.length > 0) {
+          const sorted = [...data].sort(
+            (a, b) =>
+              distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(a.lat), parseFloat(a.lon)) -
+              distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(b.lat), parseFloat(b.lon))
+          );
+          const coords = { lat: parseFloat(sorted[0].lat), lng: parseFloat(sorted[0].lon) };
           if (type === 'pickup') setPickupCoords(coords);
           else setDropoffCoords(coords);
           return coords;
@@ -360,13 +391,6 @@ export default function App() {
       }
     }
     return null;
-  };
-
-  const queryNominatim = async (q) => {
-    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&limit=6&q=${encodeURIComponent(q)}`;
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    const data = await res.json();
-    return Array.isArray(data) ? data : [];
   };
 
   const searchAddress = (query, type) => {
@@ -392,44 +416,60 @@ export default function App() {
         const candidates = Array.from(
           new Set([
             typedTrimmed,
-            withoutNum.length >= 3 ? withoutNum : null,
-            simplified.length >= 3 && !simplified.toLowerCase().includes('ct') ? `${simplified} CT` : simplified
+            `${typedTrimmed} CT`,
+            withoutNum.length >= 3 ? `${withoutNum} CT` : null,
+            simplified.length >= 3 ? `${simplified} CT` : null
           ].filter(Boolean))
         );
 
-        let nomData = [];
+        let merged = [];
         for (const candidate of candidates) {
-          nomData = await queryNominatim(candidate);
-          if (nomData.length > 0) break;
+          const batch = await queryNominatim(candidate, true);
+          merged = [...merged, ...batch];
+          if (merged.length >= 8) break;
         }
 
-        let formatted = [];
-        if (nomData.length > 0) {
-          formatted = nomData.map((item) => {
-            const addr = item.address || {};
-            const streetName = item.name || addr.road || item.display_name.split(',')[0];
-            const area = [
-              addr.city || addr.town || addr.village || addr.hamlet || addr.county,
-              addr.state_code || addr.state
-            ]
-              .filter(Boolean)
-              .join(', ');
-
-            const hasUserNumber = /^\d+/.test(typedTrimmed);
-            const userPrefix = hasUserNumber ? typedTrimmed.split(/\s+/)[0] : '';
-            const startsWithNum = /^\d+/.test(streetName);
-            const finalStreet = hasUserNumber && !startsWithNum ? `${userPrefix} ${streetName}` : streetName;
-            const fullLabel = area && !finalStreet.toLowerCase().includes(area.toLowerCase()) ? `${finalStreet}, ${area}` : finalStreet;
-
-            return {
-              title: finalStreet,
-              subtitle: area || item.display_name,
-              label: fullLabel,
-              lat: parseFloat(item.lat),
-              lng: parseFloat(item.lon)
-            };
-          });
+        const deduped = [];
+        const seen = new Set();
+        for (const item of merged) {
+          const key = `${item.lat}-${item.lon}-${item.display_name}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            deduped.push(item);
+          }
         }
+
+        // Prioriza resultados cercanos a la ubicación actual / zona de Connecticut
+        deduped.sort(
+          (a, b) =>
+            distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(a.lat), parseFloat(a.lon)) -
+            distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(b.lat), parseFloat(b.lon))
+        );
+
+        const formatted = deduped.slice(0, 10).map((item) => {
+          const addr = item.address || {};
+          const streetName = item.name || addr.road || item.display_name.split(',')[0];
+          const area = [
+            addr.city || addr.town || addr.village || addr.hamlet || addr.county,
+            addr.state_code || addr.state
+          ]
+            .filter(Boolean)
+            .join(', ');
+
+          const hasUserNumber = /^\d+/.test(typedTrimmed);
+          const userPrefix = hasUserNumber ? typedTrimmed.split(/\s+/)[0] : '';
+          const startsWithNum = /^\d+/.test(streetName);
+          const finalStreet = hasUserNumber && !startsWithNum ? `${userPrefix} ${streetName}` : streetName;
+          const fullLabel = area && !finalStreet.toLowerCase().includes(area.toLowerCase()) ? `${finalStreet}, ${area}` : finalStreet;
+
+          return {
+            title: finalStreet,
+            subtitle: area || item.display_name,
+            label: fullLabel,
+            lat: parseFloat(item.lat),
+            lng: parseFloat(item.lon)
+          };
+        });
 
         if (type === 'pickup') setPickupSuggestions(formatted);
         else setDropoffSuggestions(formatted);
@@ -881,7 +921,7 @@ export default function App() {
                   )}
                 </div>
                 {pickupSuggestions.length > 0 && (
-                  <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-56 overflow-y-auto">
+                  <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-60 overflow-y-auto">
                     {pickupSuggestions.map((item, idx) => (
                       <button
                         key={idx}
@@ -936,7 +976,7 @@ export default function App() {
                   )}
                 </div>
                 {dropoffSuggestions.length > 0 && (
-                  <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-56 overflow-y-auto">
+                  <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-60 overflow-y-auto">
                     {dropoffSuggestions.map((item, idx) => (
                       <button
                         key={idx}
