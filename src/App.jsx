@@ -40,6 +40,7 @@ const TRANSLATIONS = {
     pickupPlaceholder: 'Escribe dirección o ciudad...',
     dropoffLabel: 'Destino',
     dropoffPlaceholder: '¿A dónde vas? (Ej. JFK Airport, New Haven...)',
+    searchingAddr: 'Buscando direcciones...',
     requesting: 'Solicitando...',
     confirmBtn: 'Confirmar',
     defaultPassenger: 'Pasajero Transy',
@@ -85,6 +86,7 @@ const TRANSLATIONS = {
     pickupPlaceholder: 'Enter address or city...',
     dropoffLabel: 'Destination',
     dropoffPlaceholder: 'Where to? (e.g. JFK Airport, New Haven...)',
+    searchingAddr: 'Searching addresses...',
     requesting: 'Requesting...',
     confirmBtn: 'Confirm',
     defaultPassenger: 'Transy Passenger',
@@ -145,6 +147,9 @@ export default function App() {
 
   const [pickupSuggestions, setPickupSuggestions] = useState([]);
   const [dropoffSuggestions, setDropoffSuggestions] = useState([]);
+  const [searchingType, setSearchingType] = useState(null); // 'pickup' | 'dropoff' | null
+  const searchTimerRef = useRef(null);
+
   const [routeStats, setRouteStats] = useState({ miles: 9.8, minutes: 18 });
   const [selectedTier, setSelectedTier] = useState('TRANSY X');
   const [passengerName, setPassengerName] = useState('');
@@ -255,32 +260,77 @@ export default function App() {
     updateRoute();
   }, [pickupCoords, dropoffCoords, role]);
 
-  const searchAddress = async (query, type) => {
+  // Buscador de direcciones estilo Uber/Lyft (Nominatim US + fallback Photon)
+  const searchAddress = (query, type) => {
     if (type === 'pickup') setPickupText(query);
     else setDropoffText(query);
 
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current);
+
     if (query.trim().length < 3) {
       type === 'pickup' ? setPickupSuggestions([]) : setDropoffSuggestions([]);
+      setSearchingType(null);
       return;
     }
 
-    try {
-      const res = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&lat=41.38&lon=-72.90&limit=5`);
-      const data = await res.json();
-      const formatted = (data.features || []).map((f) => {
-        const p = f.properties;
-        const label = [p.name, p.street, p.housenumber, p.city || p.town, p.state].filter(Boolean).join(', ');
-        return {
-          label: label || query,
-          lat: f.geometry.coordinates[1],
-          lng: f.geometry.coordinates[0]
-        };
-      });
-      if (type === 'pickup') setPickupSuggestions(formatted);
-      else setDropoffSuggestions(formatted);
-    } catch (e) {
-      console.error(e);
-    }
+    setSearchingType(type);
+
+    searchTimerRef.current = setTimeout(async () => {
+      try {
+        let formatted = [];
+        const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&limit=6&q=${encodeURIComponent(query)}`;
+        const nomRes = await fetch(nomUrl, { headers: { Accept: 'application/json' } });
+        const nomData = await nomRes.json();
+
+        if (Array.isArray(nomData) && nomData.length > 0) {
+          formatted = nomData.map((item) => {
+            const addr = item.address || {};
+            const mainName =
+              item.name ||
+              [addr.house_number, addr.road].filter(Boolean).join(' ') ||
+              item.display_name.split(',')[0];
+            const area = [
+              addr.city || addr.town || addr.village || addr.hamlet || addr.county,
+              addr.state_code || addr.state
+            ]
+              .filter(Boolean)
+              .join(', ');
+            const fullLabel = area && !mainName.includes(area) ? `${mainName}, ${area}` : item.display_name;
+
+            return {
+              title: mainName,
+              subtitle: area || item.display_name,
+              label: fullLabel,
+              lat: parseFloat(item.lat),
+              lng: parseFloat(item.lon)
+            };
+          });
+        } else {
+          const phRes = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&lat=41.38&lon=-72.90&limit=6`);
+          const phData = await phRes.json();
+          formatted = (phData.features || []).map((f) => {
+            const p = f.properties;
+            const title = p.name || [p.housenumber, p.street].filter(Boolean).join(' ') || query;
+            const subtitle = [p.city || p.town, p.state, p.country].filter(Boolean).join(', ');
+            const label = subtitle ? `${title}, ${subtitle}` : title;
+            return {
+              title,
+              subtitle,
+              label,
+              lat: f.geometry.coordinates[1],
+              lng: f.geometry.coordinates[0]
+            };
+          });
+        }
+
+        if (type === 'pickup') setPickupSuggestions(formatted);
+        else setDropoffSuggestions(formatted);
+      } catch (e) {
+        console.error('Error buscando dirección:', e);
+      } finally {
+        setSearchingType(null);
+      }
+    }, 250);
   };
 
   const handleUseCurrentGPS = () => {
@@ -296,10 +346,12 @@ export default function App() {
         setPickupCoords({ lat, lng });
         setPickupSuggestions([]);
         try {
-          const res = await fetch(`https://photon.komoot.io/reverse?lon=${lng}&lat=${lat}`);
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
           const data = await res.json();
-          const p = data.features?.[0]?.properties;
-          const label = p ? [p.name, p.street, p.city || p.town, p.state].filter(Boolean).join(', ') : `GPS (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
+          const addr = data.address || {};
+          const street = [addr.house_number, addr.road].filter(Boolean).join(' ') || data.name;
+          const cityState = [addr.city || addr.town || addr.village || addr.county, addr.state_code || addr.state].filter(Boolean).join(', ');
+          const label = [street, cityState].filter(Boolean).join(', ') || `GPS (${lat.toFixed(4)}, ${lng.toFixed(4)})`;
           setPickupText(label);
         } catch {
           setPickupText(`GPS (${lat.toFixed(4)}, ${lng.toFixed(4)})`);
@@ -397,7 +449,6 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-2">
-            {/* Selector de Idioma EN / ES */}
             <div className="flex bg-slate-950 p-0.5 rounded-lg border border-slate-800 text-[11px] font-bold">
               <button
                 onClick={() => changeLang('en')}
@@ -505,7 +556,7 @@ export default function App() {
             </button>
           </div>
 
-          {/* Tarjeta de Seguimiento en Vivo si el pasajero tiene un viaje activo */}
+          {/* Tarjeta de Seguimiento en Vivo */}
           {trackedRide ? (
             <div className="bg-slate-900 border border-emerald-500/50 rounded-2xl p-5 space-y-4 shadow-2xl">
               <div className="flex items-center justify-between">
@@ -535,7 +586,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Botones de Mensaje de Texto (SMS) y WhatsApp */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 <a
                   href={`sms:+${DRIVER_PHONE}?&body=${encodeURIComponent(t.smsTemplate(trackedRide.passenger_name, trackedRide.pickup, trackedRide.dropoff))}`}
@@ -598,7 +648,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Input Origen */}
+              {/* Input Origen con Autocompletado */}
               <div className="relative">
                 <label className="text-xs text-slate-400 mb-1 block">{t.pickupLabel}</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 focus-within:border-emerald-500">
@@ -611,27 +661,36 @@ export default function App() {
                     className="bg-transparent w-full text-sm text-white focus:outline-none"
                   />
                 </div>
-                {pickupSuggestions.length > 0 && (
-                  <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-30 overflow-hidden">
-                    {pickupSuggestions.map((item, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => {
-                          setPickupText(item.label);
-                          setPickupCoords({ lat: item.lat, lng: item.lng });
-                          setPickupSuggestions([]);
-                        }}
-                        className="w-full text-left px-3 py-2.5 text-xs hover:bg-slate-800 border-b border-slate-800/60 last:border-0 flex items-center gap-2"
-                      >
-                        <MapPin className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-                        <span className="truncate">{item.label}</span>
-                      </button>
-                    ))}
+                {(searchingType === 'pickup' || pickupSuggestions.length > 0) && (
+                  <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-60 overflow-y-auto">
+                    {searchingType === 'pickup' && pickupSuggestions.length === 0 ? (
+                      <div className="px-3 py-2.5 text-xs text-slate-400">{t.searchingAddr}</div>
+                    ) : (
+                      pickupSuggestions.map((item, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            setPickupText(item.label);
+                            setPickupCoords({ lat: item.lat, lng: item.lng });
+                            setPickupSuggestions([]);
+                          }}
+                          className="w-full text-left px-3 py-2.5 hover:bg-slate-800 border-b border-slate-800/70 last:border-0 flex items-start gap-2.5"
+                        >
+                          <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold text-white truncate">{item.title}</div>
+                            {item.subtitle && <div className="text-[11px] text-slate-400 truncate">{item.subtitle}</div>}
+                          </div>
+                        </button>
+                      ))
+                    )}
                   </div>
                 )}
               </div>
 
-              {/* Input Destino */}
+              {/* Input Destino con Autocompletado */}
               <div className="relative">
                 <label className="text-xs text-slate-400 mb-1 block">{t.dropoffLabel}</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 focus-within:border-emerald-500">
@@ -644,22 +703,31 @@ export default function App() {
                     className="bg-transparent w-full text-sm text-white focus:outline-none"
                   />
                 </div>
-                {dropoffSuggestions.length > 0 && (
-                  <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-30 overflow-hidden">
-                    {dropoffSuggestions.map((item, idx) => (
-                      <button
-                        key={idx}
-                        onClick={() => {
-                          setDropoffText(item.label);
-                          setDropoffCoords({ lat: item.lat, lng: item.lng });
-                          setDropoffSuggestions([]);
-                        }}
-                        className="w-full text-left px-3 py-2.5 text-xs hover:bg-slate-800 border-b border-slate-800/60 last:border-0 flex items-center gap-2"
-                      >
-                        <Navigation className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                        <span className="truncate">{item.label}</span>
-                      </button>
-                    ))}
+                {(searchingType === 'dropoff' || dropoffSuggestions.length > 0) && (
+                  <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-60 overflow-y-auto">
+                    {searchingType === 'dropoff' && dropoffSuggestions.length === 0 ? (
+                      <div className="px-3 py-2.5 text-xs text-slate-400">{t.searchingAddr}</div>
+                    ) : (
+                      dropoffSuggestions.map((item, idx) => (
+                        <button
+                          key={idx}
+                          type="button"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => {
+                            setDropoffText(item.label);
+                            setDropoffCoords({ lat: item.lat, lng: item.lng });
+                            setDropoffSuggestions([]);
+                          }}
+                          className="w-full text-left px-3 py-2.5 hover:bg-slate-800 border-b border-slate-800/70 last:border-0 flex items-start gap-2.5"
+                        >
+                          <Navigation className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                          <div className="min-w-0">
+                            <div className="text-xs font-semibold text-white truncate">{item.title}</div>
+                            {item.subtitle && <div className="text-[11px] text-slate-400 truncate">{item.subtitle}</div>}
+                          </div>
+                        </button>
+                      ))
+                    )}
                   </div>
                 )}
               </div>
