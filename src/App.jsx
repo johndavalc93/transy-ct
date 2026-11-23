@@ -192,6 +192,7 @@ export default function App() {
 
   const [pickupSuggestions, setPickupSuggestions] = useState([]);
   const [dropoffSuggestions, setDropoffSuggestions] = useState([]);
+  const [searchingField, setSearchingField] = useState(null);
   const searchTimerRef = useRef(null);
 
   const [routeStats, setRouteStats] = useState({ miles: 9.8, minutes: 18 });
@@ -365,17 +366,11 @@ export default function App() {
     if (!clean) return null;
 
     const withoutHouseNum = clean.replace(/^\d+\s+/, '');
-    const simplified = clean
-      .replace(/\b(the|ct|connecticut)\b/gi, ' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-
     const queries = Array.from(
       new Set([
         clean,
         `${clean}, CT`,
-        withoutHouseNum !== clean ? `${withoutHouseNum}, CT` : null,
-        simplified ? `${simplified}, CT` : null
+        withoutHouseNum !== clean ? `${withoutHouseNum}, CT` : null
       ].filter(Boolean))
     );
 
@@ -400,6 +395,39 @@ export default function App() {
     return null;
   };
 
+  const formatSuggestionsList = (rawItems, typedTrimmed) => {
+    const sorted = [...rawItems].sort(
+      (a, b) =>
+        distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(a.lat), parseFloat(a.lon)) -
+        distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(b.lat), parseFloat(b.lon))
+    );
+
+    return sorted.slice(0, 10).map((item) => {
+      const addr = item.address || {};
+      const streetName = item.name || addr.road || item.display_name.split(',')[0];
+      const area = [
+        addr.city || addr.town || addr.village || addr.hamlet || addr.county,
+        addr.state_code || addr.state
+      ]
+        .filter(Boolean)
+        .join(', ');
+
+      const hasUserNumber = /^\d+/.test(typedTrimmed);
+      const userPrefix = hasUserNumber ? typedTrimmed.split(/\s+/)[0] : '';
+      const startsWithNum = /^\d+/.test(streetName);
+      const finalStreet = hasUserNumber && !startsWithNum ? `${userPrefix} ${streetName}` : streetName;
+      const fullLabel = area && !finalStreet.toLowerCase().includes(area.toLowerCase()) ? `${finalStreet}, ${area}` : finalStreet;
+
+      return {
+        title: finalStreet,
+        subtitle: area || item.display_name,
+        label: fullLabel,
+        lat: parseFloat(item.lat),
+        lng: parseFloat(item.lon)
+      };
+    });
+  };
+
   const searchAddress = (query, type) => {
     if (type === 'pickup') setPickupText(query);
     else setDropoffText(query);
@@ -408,81 +436,36 @@ export default function App() {
 
     if (query.trim().length < 3) {
       type === 'pickup' ? setPickupSuggestions([]) : setDropoffSuggestions([]);
+      setSearchingField(null);
       return;
     }
+
+    setSearchingField(type);
 
     searchTimerRef.current = setTimeout(async () => {
       try {
         const typedTrimmed = query.trim();
-        const withoutNum = typedTrimmed.replace(/^\d+\s+/, '');
-        const simplified = typedTrimmed
-          .replace(/\b(the|ct|connecticut)\b/gi, ' ')
-          .replace(/\s+/g, ' ')
-          .trim();
+        let results = await queryNominatim(typedTrimmed, true);
 
-        const candidates = Array.from(
-          new Set([
-            typedTrimmed,
-            `${typedTrimmed}, CT`,
-            withoutNum.length >= 3 ? `${withoutNum}, CT` : null,
-            simplified.length >= 3 ? `${simplified}, CT` : null
-          ].filter(Boolean))
-        );
-
-        let merged = [];
-        for (const candidate of candidates) {
-          const batch = await queryNominatim(candidate, true);
-          merged = [...merged, ...batch];
-          if (merged.length >= 6) break;
+        if (results.length === 0) {
+          const withoutNum = typedTrimmed.replace(/^\d+\s+/, '').trim();
+          const fallbackQuery = withoutNum.length >= 3 && withoutNum !== typedTrimmed
+            ? `${withoutNum}, CT`
+            : `${typedTrimmed}, CT`;
+          results = await queryNominatim(fallbackQuery, true);
         }
 
-        const deduped = [];
-        const seen = new Set();
-        for (const item of merged) {
-          const key = `${item.lat}-${item.lon}-${item.display_name}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            deduped.push(item);
-          }
-        }
-
-        deduped.sort(
-          (a, b) =>
-            distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(a.lat), parseFloat(a.lon)) -
-            distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(b.lat), parseFloat(b.lon))
-        );
-
-        const formatted = deduped.slice(0, 10).map((item) => {
-          const addr = item.address || {};
-          const streetName = item.name || addr.road || item.display_name.split(',')[0];
-          const area = [
-            addr.city || addr.town || addr.village || addr.hamlet || addr.county,
-            addr.state_code || addr.state
-          ]
-            .filter(Boolean)
-            .join(', ');
-
-          const hasUserNumber = /^\d+/.test(typedTrimmed);
-          const userPrefix = hasUserNumber ? typedTrimmed.split(/\s+/)[0] : '';
-          const startsWithNum = /^\d+/.test(streetName);
-          const finalStreet = hasUserNumber && !startsWithNum ? `${userPrefix} ${streetName}` : streetName;
-          const fullLabel = area && !finalStreet.toLowerCase().includes(area.toLowerCase()) ? `${finalStreet}, ${area}` : finalStreet;
-
-          return {
-            title: finalStreet,
-            subtitle: area || item.display_name,
-            label: fullLabel,
-            lat: parseFloat(item.lat),
-            lng: parseFloat(item.lon)
-          };
-        });
-
+        const formatted = formatSuggestionsList(results, typedTrimmed);
         if (type === 'pickup') setPickupSuggestions(formatted);
         else setDropoffSuggestions(formatted);
       } catch (e) {
         console.error('Error buscando dirección:', e);
+        if (type === 'pickup') setPickupSuggestions([]);
+        else setDropoffSuggestions([]);
+      } finally {
+        setSearchingField(null);
       }
-    }, 350);
+    }, 450);
   };
 
   const handleUseCurrentGPS = () => {
@@ -934,6 +917,9 @@ export default function App() {
                     </button>
                   )}
                 </div>
+                {searchingField === 'pickup' && (
+                  <div className="text-[11px] text-slate-400 mt-1 px-1">{t.searchingAddr}</div>
+                )}
                 {pickupSuggestions.length > 0 && (
                   <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-60 overflow-y-auto">
                     {pickupSuggestions.map((item, idx) => (
@@ -961,224 +947,4 @@ export default function App() {
 
               <div className="relative">
                 <label className="text-xs text-slate-400 mb-1 block">{t.dropoffLabel}</label>
-                <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 focus-within:border-emerald-500">
-                  <Navigation className="w-4 h-4 text-amber-400 mr-2 shrink-0" />
-                  <input
-                    type="text"
-                    value={dropoffText}
-                    onChange={(e) => searchAddress(e.target.value, 'dropoff')}
-                    onBlur={() => {
-                      setTimeout(() => {
-                        setDropoffSuggestions([]);
-                        geocodeExactText(dropoffText, 'dropoff');
-                      }, 180);
-                    }}
-                    placeholder={t.dropoffPlaceholder}
-                    className="bg-transparent w-full text-base text-white focus:outline-none"
-                  />
-                  {dropoffText && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setDropoffText('');
-                        setDropoffSuggestions([]);
-                      }}
-                      className="text-slate-400 hover:text-white ml-1"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-                {dropoffSuggestions.length > 0 && (
-                  <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-60 overflow-y-auto">
-                    {dropoffSuggestions.map((item, idx) => (
-                      <button
-                        key={idx}
-                        type="button"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => {
-                          setDropoffText(item.label);
-                          setDropoffCoords({ lat: item.lat, lng: item.lng });
-                          setDropoffSuggestions([]);
-                        }}
-                        className="w-full text-left px-3 py-2.5 hover:bg-slate-800 border-b border-slate-800/70 last:border-0 flex items-start gap-2.5"
-                      >
-                        <Navigation className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                        <div className="min-w-0">
-                          <div className="text-xs font-semibold text-white truncate">{item.title}</div>
-                          {item.subtitle && <div className="text-[11px] text-slate-400 truncate">{item.subtitle}</div>}
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div className="space-y-2 pt-2">
-                {t.tiers.map((tier) => {
-                  const active = selectedTier === tier.id;
-                  return (
-                    <button
-                      key={tier.id}
-                      onClick={() => setSelectedTier(tier.id)}
-                      className={`w-full flex items-center justify-between p-3 rounded-xl border transition text-left ${
-                        active ? 'bg-emerald-950/40 border-emerald-500' : 'bg-slate-950/70 border-slate-800 hover:border-slate-700'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className={`p-2 rounded-lg ${active ? 'bg-emerald-500/20 text-emerald-400' : 'bg-slate-800 text-slate-400'}`}>
-                          <Car className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <div className="font-bold text-sm">{tier.name}</div>
-                          <div className="text-xs text-slate-400">{tier.desc}</div>
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <div className="font-bold text-base text-white">$ {calculatePrice(tier)}</div>
-                        <div className="text-[11px] text-emerald-400">{isScheduled ? t.scheduledBadge : tier.eta}</div>
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-
-              <button
-                onClick={handleRequestRide}
-                disabled={loading}
-                className="w-full bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3.5 rounded-xl transition shadow-lg shadow-emerald-500/20 text-sm"
-              >
-                {loading ? t.requesting : `${t.confirmBtn} ${selectedTier}`}
-              </button>
-            </div>
-          )}
-        </main>
-      )}
-
-      {role === 'driver' && (
-        <main className="max-w-xl mx-auto px-4 pt-6 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-lg font-bold">Panel del Conductor</h2>
-            <button onClick={fetchRides} className="text-xs text-emerald-400 flex items-center gap-1">
-              <RefreshCw className="w-3.5 h-3.5" /> Actualizar
-            </button>
-          </div>
-
-          {activeRides.length === 0 ? (
-            <div className="bg-slate-900 border border-slate-800 rounded-2xl p-8 text-center text-slate-400 text-sm">
-              No hay solicitudes activas en este momento.
-            </div>
-          ) : (
-            activeRides.map((ride) => {
-              const driverNet = (Number(ride.fare) * 0.85).toFixed(2);
-              const mapsDestination = ride.dropoff_lat && ride.dropoff_lng
-                ? `${ride.dropoff_lat},${ride.dropoff_lng}`
-                : encodeURIComponent(ride.dropoff);
-
-              return (
-                <div key={ride.id} className="bg-slate-900 border border-slate-800 rounded-2xl p-4 space-y-3 shadow-lg">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <span className="text-xs font-bold px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 uppercase">
-                        {ride.service_type} • {ride.status}
-                      </span>
-                      <div className="text-sm font-bold text-white mt-1.5">{ride.passenger_name}</div>
-                      <div className="text-xs text-slate-400">{ride.distance_miles} mi • {ride.duration_min} min</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-lg font-black text-emerald-400">$ {driverNet}</div>
-                      <div className="text-[11px] text-slate-400">Tu ganancia (85%)</div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5 text-xs bg-slate-950 p-3 rounded-xl border border-slate-800">
-                    <div className="flex items-start gap-2">
-                      <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                      <span><strong>Recoger:</strong> {ride.pickup}</span>
-                    </div>
-                    <div className="flex items-start gap-2">
-                      <Navigation className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                      <span><strong>Destino:</strong> {ride.dropoff}</span>
-                    </div>
-                  </div>
-
-                  <a
-                    href={`https://www.google.com/maps/dir/?api=1&destination=${mapsDestination}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="w-full bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 border border-slate-700"
-                  >
-                    <ExternalLink className="w-4 h-4 text-emerald-400" />
-                    Navegar con GPS (Google / Apple Maps)
-                  </a>
-
-                  <div className="grid grid-cols-2 gap-2 pt-1">
-                    {ride.status === 'pending' && (
-                      <button
-                        onClick={() => updateRideStatus(ride.id, 'accepted')}
-                        className="col-span-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
-                      >
-                        Aceptar Viaje
-                      </button>
-                    )}
-                    {ride.status === 'accepted' && (
-                      <button
-                        onClick={() => updateRideStatus(ride.id, 'in_progress')}
-                        className="col-span-2 bg-amber-400 hover:bg-amber-300 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
-                      >
-                        Pasajero a bordo (Iniciar viaje)
-                      </button>
-                    )}
-                    {ride.status === 'in_progress' && (
-                      <button
-                        onClick={() => updateRideStatus(ride.id, 'completed')}
-                        className="col-span-2 bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-2.5 rounded-xl text-sm"
-                      >
-                        Finalizar y Cobrar ($ {ride.fare})
-                      </button>
-                    )}
-                  </div>
-                </div>
-              );
-            })
-          )}
-        </main>
-      )}
-
-      {role === 'admin' && (
-        <main className="max-w-3xl mx-auto px-4 pt-6 space-y-4">
-          <h2 className="text-lg font-bold">Administración Transy</h2>
-          <div className="grid grid-cols-3 gap-3">
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-              <div className="text-xs text-slate-400">Viajes Completados</div>
-              <div className="text-xl font-black mt-1">{completedRides.length}</div>
-            </div>
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-              <div className="text-xs text-slate-400">Facturación Bruta</div>
-              <div className="text-xl font-black text-emerald-400 mt-1">$ {totalRevenue.toFixed(2)}</div>
-            </div>
-            <div className="bg-slate-900 border border-slate-800 p-4 rounded-2xl">
-              <div className="text-xs text-slate-400">Comisión App (15%)</div>
-              <div className="text-xl font-black text-amber-400 mt-1">$ {(totalRevenue * 0.15).toFixed(2)}</div>
-            </div>
-          </div>
-
-          <div className="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden">
-            <div className="p-3 border-b border-slate-800 text-xs font-bold text-slate-400 uppercase">Historial en Supabase</div>
-            <div className="divide-y divide-slate-800">
-              {rides.map((r) => (
-                <div key={r.id} className="p-3 flex justify-between items-center text-xs">
-                  <div>
-                    <div className="font-semibold text-white">{r.passenger_name}: {r.pickup} → {r.dropoff}</div>
-                    <div className="text-slate-400">{r.service_type} • Estado: {r.status}</div>
-                  </div>
-                  <div className="font-bold text-emerald-400">$ {Number(r.fare).toFixed(2)}</div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </main>
-      )}
-    </div>
-  );
-}
+                <div className="flex items
