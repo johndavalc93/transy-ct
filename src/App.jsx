@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   MapPin, Navigation, Car, Shield, AlertCircle, RefreshCw,
-  Compass, ExternalLink, MessageCircle, MessageSquare, User, X, Move, Calendar, Clock
+  Compass, ExternalLink, MessageCircle, MessageSquare, User, X, Move, Calendar, Clock, Check
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import L from 'leaflet';
@@ -32,8 +32,8 @@ const TRANSLATIONS = {
     useGps: 'Usar mi GPS',
     locating: 'Ubicando...',
     pinModeBtn: 'Mover pin en mapa',
-    pinModeActive: 'Toca o arrastra el pin verde',
-    pinHint: 'Arrastra el pin verde o toca el mapa para elegir el punto exacto de recogida.',
+    pinModeActive: 'Listo (ubicar pin)',
+    pinHint: 'Toca "Mover pin en mapa" para ampliar, ajusta el pin verde y toca "Listo" para volver.',
     gpsAlert: 'Activa los permisos de ubicación en tu teléfono para usar el GPS.',
     noGpsSupport: 'Tu navegador no soporta GPS.',
     expressHeader: 'Connecticut Express',
@@ -88,8 +88,8 @@ const TRANSLATIONS = {
     useGps: 'Use my GPS',
     locating: 'Locating...',
     pinModeBtn: 'Move pin on map',
-    pinModeActive: 'Tap or drag green pin',
-    pinHint: 'Drag the green pin or tap the map to pick your exact pickup spot.',
+    pinModeActive: 'Done (pin mode)',
+    pinHint: 'Tap "Move pin on map" to expand, adjust the green pin, and tap "Done" to return.',
     gpsAlert: 'Please enable location permissions on your phone to use GPS.',
     noGpsSupport: 'Your browser does not support GPS.',
     expressHeader: 'Connecticut Express',
@@ -206,6 +206,12 @@ export default function App() {
 
   useEffect(() => {
     pinAdjustModeRef.current = pinAdjustMode;
+    if (mapInstance.current) {
+      const timer = setTimeout(() => {
+        mapInstance.current?.invalidateSize();
+      }, 220);
+      return () => clearTimeout(timer);
+    }
   }, [pinAdjustMode]);
 
   const fetchRides = async () => {
@@ -439,7 +445,6 @@ export default function App() {
           }
         }
 
-        // Prioriza resultados cercanos a la ubicación actual / zona de Connecticut
         deduped.sort(
           (a, b) =>
             distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(a.lat), parseFloat(a.lon)) -
@@ -718,7 +723,13 @@ export default function App() {
       {role === 'passenger' && (
         <main className="max-w-xl w-full mx-auto px-4 pt-4 space-y-4">
           <div className="space-y-1.5">
-            <div className="relative rounded-2xl overflow-hidden border border-slate-800 shadow-xl h-56 sm:h-64 bg-slate-900">
+            <div
+              className={`relative rounded-2xl overflow-hidden border shadow-xl bg-slate-900 transition-all duration-200 ${
+                pinAdjustMode
+                  ? 'h-96 sm:h-[28rem] border-emerald-500 ring-2 ring-emerald-500/30'
+                  : 'h-56 sm:h-64 border-slate-800'
+              }`}
+            >
               <div ref={mapRef} className="w-full h-full z-10" />
 
               <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2">
@@ -727,23 +738,25 @@ export default function App() {
                   onClick={() => setPinAdjustMode((prev) => !prev)}
                   className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg border transition ${
                     pinAdjustMode
-                      ? 'bg-emerald-500 text-slate-950 border-emerald-300'
+                      ? 'bg-emerald-500 text-slate-950 border-emerald-300 font-bold'
                       : 'bg-slate-900/90 hover:bg-slate-800 text-white border-slate-700'
                   }`}
                 >
-                  <Move className="w-3.5 h-3.5" />
+                  {pinAdjustMode ? <Check className="w-3.5 h-3.5" /> : <Move className="w-3.5 h-3.5" />}
                   {pinAdjustMode ? t.pinModeActive : t.pinModeBtn}
                 </button>
 
-                <button
-                  type="button"
-                  onClick={handleUseCurrentGPS}
-                  disabled={gpsLoading}
-                  className="bg-slate-900/90 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg"
-                >
-                  <Compass className={`w-4 h-4 ${gpsLoading ? 'animate-spin' : ''}`} />
-                  {gpsLoading ? t.locating : t.useGps}
-                </button>
+                {!pinAdjustMode && (
+                  <button
+                    type="button"
+                    onClick={handleUseCurrentGPS}
+                    disabled={gpsLoading}
+                    className="bg-slate-900/90 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg"
+                  >
+                    <Compass className={`w-4 h-4 ${gpsLoading ? 'animate-spin' : ''}`} />
+                    {gpsLoading ? t.locating : t.useGps}
+                  </button>
+                )}
               </div>
             </div>
             <p className="text-[11px] text-slate-400 px-1">{t.pinHint}</p>
