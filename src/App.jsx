@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   MapPin, Navigation, Car, Shield, AlertCircle, RefreshCw,
-  Compass, ExternalLink, MessageCircle, MessageSquare, User, X
+  Compass, ExternalLink, MessageCircle, MessageSquare, User, X, Move
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 import L from 'leaflet';
@@ -31,6 +31,9 @@ const TRANSLATIONS = {
     enter: 'Entrar',
     useGps: 'Usar mi GPS',
     locating: 'Ubicando...',
+    pinModeBtn: 'Mover pin en mapa',
+    pinModeActive: 'Toca o arrastra el pin verde',
+    pinHint: 'Arrastra el pin verde o toca el mapa para elegir el punto exacto de recogida.',
     gpsAlert: 'Activa los permisos de ubicación en tu teléfono para usar el GPS.',
     noGpsSupport: 'Tu navegador no soporta GPS.',
     expressHeader: 'Connecticut Express',
@@ -77,6 +80,9 @@ const TRANSLATIONS = {
     enter: 'Enter',
     useGps: 'Use my GPS',
     locating: 'Locating...',
+    pinModeBtn: 'Move pin on map',
+    pinModeActive: 'Tap or drag green pin',
+    pinHint: 'Drag the green pin or tap the map to pick your exact pickup spot.',
     gpsAlert: 'Please enable location permissions on your phone to use GPS.',
     noGpsSupport: 'Your browser does not support GPS.',
     expressHeader: 'Connecticut Express',
@@ -144,6 +150,7 @@ export default function App() {
   const [dropoffText, setDropoffText] = useState('');
   const [pickupCoords, setPickupCoords] = useState({ lat: 41.3839, lng: -72.9026 });
   const [dropoffCoords, setDropoffCoords] = useState({ lat: 41.2638, lng: -72.8868 });
+  const [pinAdjustMode, setPinAdjustMode] = useState(false);
 
   const [pickupSuggestions, setPickupSuggestions] = useState([]);
   const [dropoffSuggestions, setDropoffSuggestions] = useState([]);
@@ -158,6 +165,11 @@ export default function App() {
   const mapRef = useRef(null);
   const mapInstance = useRef(null);
   const layerGroup = useRef(null);
+  const pinAdjustModeRef = useRef(false);
+
+  useEffect(() => {
+    pinAdjustModeRef.current = pinAdjustMode;
+  }, [pinAdjustMode]);
 
   const fetchRides = async () => {
     const { data, error } = await supabase
@@ -209,12 +221,38 @@ export default function App() {
     }
   };
 
+  // Actualiza coordenadas del pin y opcionalmente rellena dirección cercana si está vacía
+  const applyPickupPinLocation = async (lat, lng, fillIfEmpty = false) => {
+    setPickupCoords({ lat, lng });
+    if (!fillIfEmpty && pickupText.trim()) return;
+
+    try {
+      const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lng}`);
+      const data = await res.json();
+      const addr = data.address || {};
+      const street = [addr.house_number, addr.road].filter(Boolean).join(' ') || data.name;
+      const cityState = [addr.city || addr.town || addr.village || addr.county, addr.state_code || addr.state].filter(Boolean).join(', ');
+      const label = [street, cityState].filter(Boolean).join(', ');
+      if (label && (!pickupText.trim() || fillIfEmpty)) {
+        setPickupText(label);
+      }
+    } catch {
+      // Mantiene el texto actual del usuario sin interrumpir
+    }
+  };
+
+  // Inicializar mapa Leaflet con soporte para tocar o arrastrar el pin de recogida
   useEffect(() => {
     if (role !== 'passenger') return;
     if (!mapRef.current || mapInstance.current) return;
 
     const map = L.map(mapRef.current, { zoomControl: false, attributionControl: false }).setView([pickupCoords.lat, pickupCoords.lng], 12);
     L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+
+    map.on('click', (e) => {
+      if (!pinAdjustModeRef.current) return;
+      applyPickupPinLocation(e.latlng.lat, e.latlng.lng, false);
+    });
 
     layerGroup.current = L.layerGroup().addTo(map);
     mapInstance.current = map;
@@ -225,6 +263,7 @@ export default function App() {
     };
   }, [role]);
 
+  // Calcular ruta real con OSRM y dibujar pin de origen arrastrable
   useEffect(() => {
     const updateRoute = async () => {
       try {
@@ -243,7 +282,12 @@ export default function App() {
             const coords = route.geometry.coordinates.map(([lng, lat]) => [lat, lng]);
             const polyline = L.polyline(coords, { color: '#10b981', weight: 5 }).addTo(layerGroup.current);
 
-            L.marker([pickupCoords.lat, pickupCoords.lng]).addTo(layerGroup.current);
+            const pickupMarker = L.marker([pickupCoords.lat, pickupCoords.lng], { draggable: true }).addTo(layerGroup.current);
+            pickupMarker.on('dragend', () => {
+              const pos = pickupMarker.getLatLng();
+              applyPickupPinLocation(pos.lat, pos.lng, false);
+            });
+
             L.marker([dropoffCoords.lat, dropoffCoords.lng]).addTo(layerGroup.current);
 
             mapInstance.current.fitBounds(polyline.getBounds(), { padding: [35, 35] });
@@ -257,12 +301,10 @@ export default function App() {
     updateRoute();
   }, [pickupCoords, dropoffCoords, role]);
 
-  // Busca coordenadas de una dirección libre sin cambiar el texto que escribió el usuario
   const geocodeExactText = async (rawText, type) => {
     const clean = rawText.trim();
     if (!clean) return null;
 
-    // Si tiene número de casa (ej. "12134 town walk drive"), intentamos primero sin el número por si el mapa solo tiene la calle
     const withoutHouseNum = clean.replace(/^\d+\s+/, '');
     const queries = withoutHouseNum !== clean ? [clean, `${clean}, CT`, `${withoutHouseNum}, CT`] : [clean, `${clean}, CT`];
 
@@ -321,7 +363,6 @@ export default function App() {
               .filter(Boolean)
               .join(', ');
 
-            // Si el usuario escribió un número al inicio (ej. 12134), lo conservamos si la sugerencia no empieza con número
             const hasUserNumber = /^\d+/.test(typedTrimmed);
             const userPrefix = hasUserNumber ? typedTrimmed.split(/\s+/)[0] : '';
             const startsWithNum = /^\d+/.test(streetName);
@@ -387,14 +428,16 @@ export default function App() {
   };
 
   const handleRequestRide = async () => {
-    const finalPickup = pickupText.trim() || 'Hamden, CT';
+    const finalPickup = pickupText.trim() || `Pin (${pickupCoords.lat.toFixed(4)}, ${pickupCoords.lng.toFixed(4)})`;
     const finalDropoff = dropoffText.trim() || 'New Haven, CT';
 
     setLoading(true);
-    await Promise.all([
-      geocodeExactText(finalPickup, 'pickup'),
-      geocodeExactText(finalDropoff, 'dropoff')
-    ]);
+    if (pickupText.trim()) {
+      await geocodeExactText(finalPickup, 'pickup');
+    }
+    if (dropoffText.trim()) {
+      await geocodeExactText(finalDropoff, 'dropoff');
+    }
 
     const tierObj = t.tiers.find((item) => item.id === selectedTier) || t.tiers[0];
     const fare = parseFloat(calculatePrice(tierObj));
@@ -421,6 +464,7 @@ export default function App() {
       .single();
 
     setLoading(false);
+    setPinAdjustMode(false);
     if (error) {
       setDbError(error.message);
     } else if (data) {
@@ -563,16 +607,36 @@ export default function App() {
 
       {role === 'passenger' && (
         <main className="max-w-xl mx-auto px-4 pt-4 space-y-4">
-          <div className="relative rounded-2xl overflow-hidden border border-slate-800 shadow-xl h-56 sm:h-64 bg-slate-900">
-            <div ref={mapRef} className="w-full h-full z-10" />
-            <button
-              onClick={handleUseCurrentGPS}
-              disabled={gpsLoading}
-              className="absolute bottom-3 right-3 z-20 bg-slate-900/90 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg"
-            >
-              <Compass className={`w-4 h-4 ${gpsLoading ? 'animate-spin' : ''}`} />
-              {gpsLoading ? t.locating : t.useGps}
-            </button>
+          <div className="space-y-1.5">
+            <div className="relative rounded-2xl overflow-hidden border border-slate-800 shadow-xl h-56 sm:h-64 bg-slate-900">
+              <div ref={mapRef} className="w-full h-full z-10" />
+
+              <div className="absolute bottom-3 right-3 z-20 flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPinAdjustMode((prev) => !prev)}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg border transition ${
+                    pinAdjustMode
+                      ? 'bg-emerald-500 text-slate-950 border-emerald-300'
+                      : 'bg-slate-900/90 hover:bg-slate-800 text-white border-slate-700'
+                  }`}
+                >
+                  <Move className="w-3.5 h-3.5" />
+                  {pinAdjustMode ? t.pinModeActive : t.pinModeBtn}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={handleUseCurrentGPS}
+                  disabled={gpsLoading}
+                  className="bg-slate-900/90 hover:bg-slate-800 text-emerald-400 border border-emerald-500/40 px-3 py-2 rounded-xl text-xs font-semibold flex items-center gap-1.5 shadow-lg"
+                >
+                  <Compass className={`w-4 h-4 ${gpsLoading ? 'animate-spin' : ''}`} />
+                  {gpsLoading ? t.locating : t.useGps}
+                </button>
+              </div>
+            </div>
+            <p className="text-[11px] text-slate-400 px-1">{t.pinHint}</p>
           </div>
 
           {trackedRide ? (
@@ -664,7 +728,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Input Origen con opción de dirección exacta + sugerencias */}
               <div className="relative">
                 <label className="text-xs text-slate-400 mb-1 block">{t.pickupLabel}</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 focus-within:border-emerald-500">
@@ -724,7 +787,6 @@ export default function App() {
                 )}
               </div>
 
-              {/* Input Destino con opción de dirección exacta + sugerencias */}
               <div className="relative">
                 <label className="text-xs text-slate-400 mb-1 block">{t.dropoffLabel}</label>
                 <div className="flex items-center bg-slate-950 border border-slate-700 rounded-xl px-3 py-2.5 focus-within:border-emerald-500">
@@ -784,7 +846,6 @@ export default function App() {
                 )}
               </div>
 
-              {/* Tarifas */}
               <div className="space-y-2 pt-2">
                 {t.tiers.map((tier) => {
                   const active = selectedTier === tier.id;
