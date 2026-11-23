@@ -158,7 +158,7 @@ export default function App() {
     localStorage.setItem('transy_lang', newLang);
   };
 
-  const [role, setRole] = useState('passenger'); // passenger | driver | admin
+  const [role, setRole] = useState('passenger');
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [pinModalTarget, setPinModalTarget] = useState(null);
   const [pinInput, setPinInput] = useState('');
@@ -353,12 +353,58 @@ export default function App() {
   };
 
   const queryNominatim = async (q, useBias = true) => {
-    const viewboxParam = useBias ? `&viewbox=${buildViewbox()}&bounded=0` : '';
-    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&limit=10${viewboxParam}&q=${encodeURIComponent(q)}`;
-    const res = await fetch(url, { headers: { Accept: 'application/json' } });
-    if (!res.ok) return [];
-    const data = await res.json();
-    return Array.isArray(data) ? data : [];
+    try {
+      const viewboxParam = useBias ? `&viewbox=${buildViewbox()}&bounded=0` : '';
+      const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&limit=8${viewboxParam}&q=${encodeURIComponent(q)}`;
+      const res = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (!res.ok) return [];
+      const data = await res.json();
+      return Array.isArray(data) ? data : [];
+    } catch {
+      return [];
+    }
+  };
+
+  const queryPhotonFallback = async (q, typedTrimmed) => {
+    try {
+      const centerLat = pickupCoords.lat || 41.3839;
+      const centerLng = pickupCoords.lng || -72.9026;
+      const url = `https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&lat=${centerLat}&lon=${centerLng}&limit=8`;
+      const res = await fetch(url);
+      if (!res.ok) return [];
+      const data = await res.json();
+      const features = Array.isArray(data?.features) ? data.features : [];
+
+      return features
+        .filter((f) => {
+          const cc = f?.properties?.countrycode;
+          return !cc || String(cc).toUpperCase() === 'US';
+        })
+        .map((f) => {
+          const props = f.properties || {};
+          const coords = f.geometry?.coordinates || [];
+          const lng = Number(coords[0]);
+          const lat = Number(coords[1]);
+          const baseStreet = props.name || [props.housenumber, props.street].filter(Boolean).join(' ') || props.city || typedTrimmed;
+          const area = [props.city || props.county, props.state].filter(Boolean).join(', ');
+          const hasUserNumber = /^\d+/.test(typedTrimmed);
+          const userPrefix = hasUserNumber ? typedTrimmed.split(/\s+/)[0] : '';
+          const startsWithNum = /^\d+/.test(baseStreet);
+          const finalStreet = hasUserNumber && !startsWithNum ? `${userPrefix} ${baseStreet}` : baseStreet;
+          const fullLabel = area && !finalStreet.toLowerCase().includes(area.toLowerCase()) ? `${finalStreet}, ${area}` : finalStreet;
+
+          return {
+            title: finalStreet,
+            subtitle: area || 'United States',
+            label: fullLabel,
+            lat,
+            lng
+          };
+        })
+        .filter((item) => Number.isFinite(item.lat) && Number.isFinite(item.lng));
+    } catch {
+      return [];
+    }
   };
 
   const geocodeExactText = async (rawText, type) => {
@@ -375,23 +421,28 @@ export default function App() {
     );
 
     for (const q of queries) {
-      try {
-        const data = await queryNominatim(q, true);
-        if (data.length > 0) {
-          const sorted = [...data].sort(
-            (a, b) =>
-              distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(a.lat), parseFloat(a.lon)) -
-              distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(b.lat), parseFloat(b.lon))
-          );
-          const coords = { lat: parseFloat(sorted[0].lat), lng: parseFloat(sorted[0].lon) };
-          if (type === 'pickup') setPickupCoords(coords);
-          else setDropoffCoords(coords);
-          return coords;
-        }
-      } catch {
-        // continúa al siguiente intento
+      const data = await queryNominatim(q, true);
+      if (data.length > 0) {
+        const sorted = [...data].sort(
+          (a, b) =>
+            distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(a.lat), parseFloat(a.lon)) -
+            distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(b.lat), parseFloat(b.lon))
+        );
+        const coords = { lat: parseFloat(sorted[0].lat), lng: parseFloat(sorted[0].lon) };
+        if (type === 'pickup') setPickupCoords(coords);
+        else setDropoffCoords(coords);
+        return coords;
       }
     }
+
+    const fallbackList = await queryPhotonFallback(`${clean}, CT`, clean);
+    if (fallbackList.length > 0) {
+      const coords = { lat: fallbackList[0].lat, lng: fallbackList[0].lng };
+      if (type === 'pickup') setPickupCoords(coords);
+      else setDropoffCoords(coords);
+      return coords;
+    }
+
     return null;
   };
 
@@ -402,7 +453,7 @@ export default function App() {
         distanceApprox(pickupCoords.lat, pickupCoords.lng, parseFloat(b.lat), parseFloat(b.lon))
     );
 
-    return sorted.slice(0, 10).map((item) => {
+    return sorted.slice(0, 8).map((item) => {
       const addr = item.address || {};
       const streetName = item.name || addr.road || item.display_name.split(',')[0];
       const area = [
@@ -455,7 +506,12 @@ export default function App() {
           results = await queryNominatim(fallbackQuery, true);
         }
 
-        const formatted = formatSuggestionsList(results, typedTrimmed);
+        let formatted = formatSuggestionsList(results, typedTrimmed);
+
+        if (formatted.length === 0) {
+          formatted = await queryPhotonFallback(`${typedTrimmed}, CT`, typedTrimmed);
+        }
+
         if (type === 'pickup') setPickupSuggestions(formatted);
         else setDropoffSuggestions(formatted);
       } catch (e) {
