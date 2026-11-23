@@ -57,25 +57,19 @@ const TRANSLATIONS = {
     serviceWord: 'Servicio',
     whenWord: 'Cuándo',
     nowValue: 'Lo antes posible (Ahora)',
-    smsPendingBtn: 'Solicitar por Mensaje (SMS)',
-    smsAssignedBtn: 'Mensaje al Conductor (SMS)',
-    whatsappPendingBtn: 'WhatsApp (Solicitar)',
-    whatsappAssignedBtn: 'WhatsApp (Conductor)',
+    smsBtn: 'Enviar Mensaje (SMS)',
+    whatsappBtn: 'WhatsApp',
     bookAnother: 'Pedir otro viaje',
     cancelRide: 'Cancelar solicitud',
-    smsTemplate: (name, pickup, dropoff, whenText, status) => {
-      if (status === 'pending') {
-        return `Hola, soy ${name}. Quiero solicitar disponibilidad de viaje en Transy (${whenText}) desde ${pickup} hasta ${dropoff}. ¿Hay conductor disponible?`;
-      }
-      return `Hola, soy ${name}. Sobre mi viaje confirmado en Transy (${whenText}) desde ${pickup} hasta ${dropoff}.`;
-    },
+    smsTemplate: (name, pickup, dropoff, whenText) =>
+      `Hola, soy ${name}. Sobre mi viaje asignado en Transy (${whenText}) desde ${pickup} hasta ${dropoff}.`,
     tiers: [
       { id: 'TRANSY X', name: 'TRANSY X', desc: 'Económico • 4 pasajeros', base: 4.5, perMile: 1.65, perMin: 0.25, eta: '3 min' },
       { id: 'TRANSY XL', name: 'TRANSY XL', desc: 'SUV / Grupos • 6 pasajeros', base: 7.5, perMile: 2.35, perMin: 0.35, eta: '5 min' },
       { id: 'TRANSY VIP', name: 'TRANSY VIP', desc: 'Ejecutivo / Aeropuertos', base: 14.0, perMile: 3.1, perMin: 0.45, eta: '8 min' }
     ],
     statuses: {
-      pending: { title: 'Buscando conductor disponible...', badge: 'Sin conductor aún', color: 'text-amber-400 bg-amber-500/20' },
+      pending: { title: 'Buscando conductor disponible...', badge: 'Buscando conductor', color: 'text-amber-400 bg-amber-500/20' },
       accepted: { title: '¡Conductor asignado! En camino a recogerte', badge: 'Conductor asignado', color: 'text-emerald-400 bg-emerald-500/20' },
       in_progress: { title: 'Viaje en curso hacia tu destino', badge: 'En ruta', color: 'text-sky-400 bg-sky-500/20' },
       completed: { title: 'Viaje finalizado. ¡Gracias por viajar con Transy!', badge: 'Completado', color: 'text-slate-300 bg-slate-700' }
@@ -119,25 +113,19 @@ const TRANSLATIONS = {
     serviceWord: 'Service',
     whenWord: 'When',
     nowValue: 'As soon as possible (Now)',
-    smsPendingBtn: 'Request via Text (SMS)',
-    smsAssignedBtn: 'Text Driver (SMS)',
-    whatsappPendingBtn: 'WhatsApp (Request)',
-    whatsappAssignedBtn: 'WhatsApp (Driver)',
+    smsBtn: 'Send Text (SMS)',
+    whatsappBtn: 'WhatsApp',
     bookAnother: 'Book another ride',
     cancelRide: 'Cancel request',
-    smsTemplate: (name, pickup, dropoff, whenText, status) => {
-      if (status === 'pending') {
-        return `Hi, I'm ${name}. I'm requesting a Transy ride (${whenText}) from ${pickup} to ${dropoff}. Is a driver available?`;
-      }
-      return `Hi, I'm ${name}. Checking in on my assigned Transy ride (${whenText}) from ${pickup} to ${dropoff}.`;
-    },
+    smsTemplate: (name, pickup, dropoff, whenText) =>
+      `Hi, I'm ${name}. Regarding my assigned Transy ride (${whenText}) from ${pickup} to ${dropoff}.`,
     tiers: [
       { id: 'TRANSY X', name: 'TRANSY X', desc: 'Economy • Up to 4 passengers', base: 4.5, perMile: 1.65, perMin: 0.25, eta: '3 min' },
       { id: 'TRANSY XL', name: 'TRANSY XL', desc: 'SUV / Groups • Up to 6 passengers', base: 7.5, perMile: 2.35, perMin: 0.35, eta: '5 min' },
       { id: 'TRANSY VIP', name: 'TRANSY VIP', desc: 'Executive / Airports', base: 14.0, perMile: 3.1, perMin: 0.45, eta: '8 min' }
     ],
     statuses: {
-      pending: { title: 'Looking for an available driver...', badge: 'No driver yet', color: 'text-amber-400 bg-amber-500/20' },
+      pending: { title: 'Looking for an available driver...', badge: 'Searching driver', color: 'text-amber-400 bg-amber-500/20' },
       accepted: { title: 'Driver assigned! On the way to pick you up', badge: 'Driver assigned', color: 'text-emerald-400 bg-emerald-500/20' },
       in_progress: { title: 'Ride in progress to your destination', badge: 'In Transit', color: 'text-sky-400 bg-sky-500/20' },
       completed: { title: 'Ride completed. Thank you for riding with Transy!', badge: 'Completed', color: 'text-slate-300 bg-slate-700' }
@@ -535,14 +523,13 @@ export default function App() {
   const completedRides = rides.filter((r) => r.status === 'completed');
   const totalRevenue = completedRides.reduce((sum, r) => sum + Number(r.fare || 0), 0);
 
-  const isDriverAssigned = trackedRide && (trackedRide.status === 'accepted' || trackedRide.status === 'in_progress');
+  const canMessageDriver = trackedRide && (trackedRide.status === 'accepted' || trackedRide.status === 'in_progress');
   const outboundMessage = trackedRide
     ? t.smsTemplate(
         trackedRide.passenger_name,
         trackedRide.pickup,
         trackedRide.dropoff,
-        rideScheduleMeta[trackedRide.id] || t.nowValue,
-        trackedRide.status
+        rideScheduleMeta[trackedRide.id] || t.nowValue
       )
     : '';
 
@@ -729,25 +716,28 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
-                <a
-                  href={`sms:+${DRIVER_PHONE}?&body=${encodeURIComponent(outboundMessage)}`}
-                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2"
-                >
-                  <MessageSquare className="w-4 h-4" />
-                  {isDriverAssigned ? t.smsAssignedBtn : t.smsPendingBtn}
-                </a>
+              {/* Solo se muestran SMS y WhatsApp cuando un conductor ya tomó el viaje */}
+              {canMessageDriver && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                  <a
+                    href={`sms:+${DRIVER_PHONE}?&body=${encodeURIComponent(outboundMessage)}`}
+                    className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2"
+                  >
+                    <MessageSquare className="w-4 h-4" />
+                    {t.smsBtn}
+                  </a>
 
-                <a
-                  href={`https://wa.me/${DRIVER_PHONE}?text=${encodeURIComponent(outboundMessage)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2"
-                >
-                  <MessageCircle className="w-4 h-4" />
-                  {isDriverAssigned ? t.whatsappAssignedBtn : t.whatsappPendingBtn}
-                </a>
-              </div>
+                  <a
+                    href={`https://wa.me/${DRIVER_PHONE}?text=${encodeURIComponent(outboundMessage)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="bg-slate-800 hover:bg-slate-700 text-emerald-400 border border-emerald-500/30 font-bold py-3 rounded-xl text-xs flex items-center justify-center gap-2"
+                  >
+                    <MessageCircle className="w-4 h-4" />
+                    {t.whatsappBtn}
+                  </a>
+                </div>
+              )}
 
               {trackedRide.status === 'completed' || trackedRide.status === 'cancelled' ? (
                 <button
