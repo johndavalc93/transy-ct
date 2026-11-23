@@ -355,6 +355,7 @@ export default function App() {
     const viewboxParam = useBias ? `&viewbox=${buildViewbox()}&bounded=0` : '';
     const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=us&limit=10${viewboxParam}&q=${encodeURIComponent(q)}`;
     const res = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!res.ok) return [];
     const data = await res.json();
     return Array.isArray(data) ? data : [];
   };
@@ -422,9 +423,9 @@ export default function App() {
         const candidates = Array.from(
           new Set([
             typedTrimmed,
-            `${typedTrimmed} CT`,
-            withoutNum.length >= 3 ? `${withoutNum} CT` : null,
-            simplified.length >= 3 ? `${simplified} CT` : null
+            `${typedTrimmed}, CT`,
+            withoutNum.length >= 3 ? `${withoutNum}, CT` : null,
+            simplified.length >= 3 ? `${simplified}, CT` : null
           ].filter(Boolean))
         );
 
@@ -432,7 +433,7 @@ export default function App() {
         for (const candidate of candidates) {
           const batch = await queryNominatim(candidate, true);
           merged = [...merged, ...batch];
-          if (merged.length >= 8) break;
+          if (merged.length >= 6) break;
         }
 
         const deduped = [];
@@ -481,7 +482,7 @@ export default function App() {
       } catch (e) {
         console.error('Error buscando dirección:', e);
       }
-    }, 250);
+    }, 350);
   };
 
   const handleUseCurrentGPS = () => {
