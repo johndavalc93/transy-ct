@@ -16,7 +16,7 @@ L.Icon.Default.mergeOptions({
 
 // CONFIGURACIÓN RÁPIDA (Pon aquí tu PIN y tu número de teléfono)
 const ACCESS_PIN = '1804';
-const DRIVER_PHONE = '3234554002'; // Formato: 1 + código de área + número (sin espacios ni guiones)
+const DRIVER_PHONE = '13234554002'; // Formato: 1 + código de área + número (sin espacios ni guiones)
 
 const TRANSLATIONS = {
   es: {
