@@ -534,7 +534,7 @@ export default function App() {
     : '';
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans pb-12">
+    <div className="min-h-screen w-full overflow-x-hidden bg-slate-950 text-slate-100 font-sans pb-12">
       <header className="sticky top-0 z-30 bg-slate-900/95 backdrop-blur border-b border-slate-800 px-4 py-3">
         <div className="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2">
           <div
@@ -650,7 +650,7 @@ export default function App() {
       )}
 
       {role === 'passenger' && (
-        <main className="max-w-xl mx-auto px-4 pt-4 space-y-4">
+        <main className="max-w-xl w-full mx-auto px-4 pt-4 space-y-4">
           <div className="space-y-1.5">
             <div className="relative rounded-2xl overflow-hidden border border-slate-800 shadow-xl h-56 sm:h-64 bg-slate-900">
               <div ref={mapRef} className="w-full h-full z-10" />
@@ -716,7 +716,6 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Solo se muestran SMS y WhatsApp cuando un conductor ya tomó el viaje */}
               {canMessageDriver && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <a
@@ -796,7 +795,7 @@ export default function App() {
                       type="date"
                       value={scheduledDate}
                       onChange={(e) => setScheduledDate(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-base text-white focus:border-emerald-500 focus:outline-none"
                     />
                   </div>
                   <div>
@@ -805,7 +804,7 @@ export default function App() {
                       type="time"
                       value={scheduledTime}
                       onChange={(e) => setScheduledTime(e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-xs text-white focus:border-emerald-500 focus:outline-none"
+                      className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2.5 py-2 text-base text-white focus:border-emerald-500 focus:outline-none"
                     />
                   </div>
                 </div>
@@ -820,7 +819,7 @@ export default function App() {
                     value={passengerName}
                     onChange={(e) => setPassengerName(e.target.value)}
                     placeholder={t.namePlaceholder}
-                    className="bg-transparent w-full text-sm text-white focus:outline-none"
+                    className="bg-transparent w-full text-base text-white focus:outline-none"
                   />
                 </div>
               </div>
@@ -840,7 +839,7 @@ export default function App() {
                       }, 180);
                     }}
                     placeholder={t.pickupPlaceholder}
-                    className="bg-transparent w-full text-sm text-white focus:outline-none"
+                    className="bg-transparent w-full text-base text-white focus:outline-none"
                   />
                   {pickupText && (
                     <button
@@ -855,31 +854,27 @@ export default function App() {
                     </button>
                   )}
                 </div>
-                {(searchingType === 'pickup' || pickupSuggestions.length > 0) && (
-                  <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-60 overflow-y-auto">
-                    {searchingType === 'pickup' && pickupSuggestions.length === 0 ? (
-                      <div className="px-3 py-2.5 text-xs text-slate-400">{t.searchingAddr}</div>
-                    ) : (
-                      pickupSuggestions.map((item, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => {
-                            setPickupText(item.label);
-                            setPickupCoords({ lat: item.lat, lng: item.lng });
-                            setPickupSuggestions([]);
-                          }}
-                          className="w-full text-left px-3 py-2.5 hover:bg-slate-800 border-b border-slate-800/70 last:border-0 flex items-start gap-2.5"
-                        >
-                          <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                          <div className="min-w-0">
-                            <div className="text-xs font-semibold text-white truncate">{item.title}</div>
-                            {item.subtitle && <div className="text-[11px] text-slate-400 truncate">{item.subtitle}</div>}
-                          </div>
-                        </button>
-                      ))
-                    )}
+                {pickupSuggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-56 overflow-y-auto">
+                    {pickupSuggestions.map((item, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setPickupText(item.label);
+                          setPickupCoords({ lat: item.lat, lng: item.lng });
+                          setPickupSuggestions([]);
+                        }}
+                        className="w-full text-left px-3 py-2.5 hover:bg-slate-800 border-b border-slate-800/70 last:border-0 flex items-start gap-2.5"
+                      >
+                        <MapPin className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-white truncate">{item.title}</div>
+                          {item.subtitle && <div className="text-[11px] text-slate-400 truncate">{item.subtitle}</div>}
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
@@ -899,7 +894,7 @@ export default function App() {
                       }, 180);
                     }}
                     placeholder={t.dropoffPlaceholder}
-                    className="bg-transparent w-full text-sm text-white focus:outline-none"
+                    className="bg-transparent w-full text-base text-white focus:outline-none"
                   />
                   {dropoffText && (
                     <button
@@ -914,31 +909,27 @@ export default function App() {
                     </button>
                   )}
                 </div>
-                {(searchingType === 'dropoff' || dropoffSuggestions.length > 0) && (
-                  <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-60 overflow-y-auto">
-                    {searchingType === 'dropoff' && dropoffSuggestions.length === 0 ? (
-                      <div className="px-3 py-2.5 text-xs text-slate-400">{t.searchingAddr}</div>
-                    ) : (
-                      dropoffSuggestions.map((item, idx) => (
-                        <button
-                          key={idx}
-                          type="button"
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => {
-                            setDropoffText(item.label);
-                            setDropoffCoords({ lat: item.lat, lng: item.lng });
-                            setDropoffSuggestions([]);
-                          }}
-                          className="w-full text-left px-3 py-2.5 hover:bg-slate-800 border-b border-slate-800/70 last:border-0 flex items-start gap-2.5"
-                        >
-                          <Navigation className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
-                          <div className="min-w-0">
-                            <div className="text-xs font-semibold text-white truncate">{item.title}</div>
-                            {item.subtitle && <div className="text-[11px] text-slate-400 truncate">{item.subtitle}</div>}
-                          </div>
-                        </button>
-                      ))
-                    )}
+                {dropoffSuggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 mt-1 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-40 overflow-hidden max-h-56 overflow-y-auto">
+                    {dropoffSuggestions.map((item, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={() => {
+                          setDropoffText(item.label);
+                          setDropoffCoords({ lat: item.lat, lng: item.lng });
+                          setDropoffSuggestions([]);
+                        }}
+                        className="w-full text-left px-3 py-2.5 hover:bg-slate-800 border-b border-slate-800/70 last:border-0 flex items-start gap-2.5"
+                      >
+                        <Navigation className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                        <div className="min-w-0">
+                          <div className="text-xs font-semibold text-white truncate">{item.title}</div>
+                          {item.subtitle && <div className="text-[11px] text-slate-400 truncate">{item.subtitle}</div>}
+                        </div>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>
